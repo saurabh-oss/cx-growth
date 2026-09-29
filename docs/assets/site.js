@@ -174,7 +174,7 @@
     function spawn(x) {
       var r = Math.random();
       P.push({
-        x: x == null ? -12 : x, y: H * (0.24 + 0.52 * Math.random()), v: 62 + Math.random() * 70,
+        x: x == null ? -12 : x, y: H * (0.27 + 0.5 * Math.random()), v: 62 + Math.random() * 70,
         kind: r < pSell ? 'sell' : (r < pSell + pHeld ? 'held' : 'solve'),
         r: 1.8 + Math.random() * 1.7, done: false, ty: 0, flash: 0, px: 0, py: 0
       });
@@ -191,7 +191,7 @@
           p.done = true;
           n.all++; n[p.kind]++;
           if (p.kind === 'held') n.solve++;
-          p.ty = p.kind === 'sell' ? H * (0.17 + 0.17 * Math.random()) : H * (0.6 + 0.21 * Math.random());
+          p.ty = p.kind === 'sell' ? H * (0.24 + 0.15 * Math.random()) : H * (0.58 + 0.21 * Math.random());
           if (p.kind === 'held') p.flash = 1;
         }
         if (p.done) p.y += (p.ty - p.y) * Math.min(1, dt * 2.4);
@@ -207,7 +207,7 @@
       ctx.globalCompositeOperation = 'source-over';
       ctx.strokeStyle = COL.gate;
       ctx.setLineDash([4, 7]); ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.moveTo(gx, 44); ctx.lineTo(gx, H - 14); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(gx, 52); ctx.lineTo(gx, H - 14); ctx.stroke();
       ctx.setLineDash([]);
       P.forEach(function (p) {
         var c = !p.done ? COL.wait : (p.kind === 'sell' ? COL.sell : COL.solve);
