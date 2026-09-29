@@ -654,6 +654,131 @@
       }).join('');
   })();
 
+  // ── architecture ───────────────────────────────────────────────────────
+  (function () {
+    var A = D.architecture, map = $('#archMap'), detail = $('#archDetail'), cap = $('#archCaption');
+    var KIND = { existing: 'var(--blue)', vendor: 'var(--red)', ai: 'var(--amber)', connector: 'var(--green)', foundation: 'var(--violet)', aws: 'var(--blue)' };
+    var STATUS = { built: ['Built', 'green'], partial: ['Partly built', 'amber'], planned: ['Planned', 'violet'], reference: ['Reference only', 'grey'] };
+    var kindLabel = {}, comps = {}, filter = null, sel = null, step = -1, playing = false, timer = null;
+    A.legend.forEach(function (l) { kindLabel[l.key] = l.label; });
+
+    function card(c) {
+      comps[c.id] = c;
+      var s = STATUS[c.status];
+      return '<button class="ac" type="button" data-id="' + esc(c.id) + '" data-status="' + c.status + '" style="--k:' + KIND[c.kind] + '"><b>' + esc(c.name) +
+        (c.star ? '<i title="New or changed in the target state" aria-hidden="true">★</i>' : '') + '</b><span class="tag tag-' + s[1] + '">' + (c.status === 'reference' ? 'Reference' : s[0]) + '</span>' +
+        ((c.agents || []).length ? '<span class="ac-agents">' + c.agents.map(function (a) {
+          return '<span title="' + esc(a.name) + '">' + a.n + '</span>';
+        }).join('') + '</span>' : '') + '</button>';
+    }
+    function band(l) {
+      var n = l.components.length;
+      return '<section class="aband' + (l.highlight ? ' hl' : '') + '" style="--k:' + (KIND[l.tone] || 'var(--muted)') + '"><header>' + esc(l.title) +
+        (l.badge ? '<em>' + esc(l.badge) + '</em>' : '') + '</header><div class="acs' + (n < 4 ? ' cols-' + n : '') + '">' + l.components.map(card).join('') + '</div></section>';
+    }
+    var html = '', half = [];
+    var flush = function () { if (half.length) { html += '<div class="arch-split">' + half.join('') + '</div>'; half = []; } };
+    A.layers.forEach(function (l) {
+      if (l.type === 'connector') { flush(); html += '<div class="aconn" data-id="' + esc(l.id) + '">' + esc(l.title) + '</div>'; return; }
+      if (l.width && l.width < 1) { half.push(band(l)); return; }
+      flush(); html += band(l);
+    });
+    flush();
+    map.innerHTML = html;
+
+    var counts = A.summary.by_status;
+    $('#archFilter').innerHTML = Object.keys(STATUS).map(function (k) {
+      return '<button class="chip" type="button" aria-pressed="false" data-k="' + k + '">' + STATUS[k][0] + ' · ' + (counts[k] || 0) + '</button>';
+    }).join('');
+    $('#archLegend').innerHTML = A.legend.filter(function (l) { return l.key !== 'connector'; }).map(function (l) {
+      return '<span><i style="background:' + KIND[l.key] + '"></i>' + esc(l.label) + '</span>';
+    }).join('') + '<span><i style="background:var(--fill-3);border-radius:50%"></i>Numbers are the agents that work there</span>';
+
+    function overview() {
+      detail.innerHTML = '<p class="kicker">How much of it runs</p><div class="arch-tally">' + Object.keys(STATUS).map(function (k) {
+        return '<div><b>' + (counts[k] || 0) + '</b><span>' + STATUS[k][0] + '</span></div>';
+      }).join('') + '</div><h4>How to read it</h4><p>Select a building block to see what it is in the target architecture, and exactly what stands behind it in the prototype.</p>' +
+        '<h4>Or watch it work</h4><p>“Follow one contact through it” lights each block in the order a real contact would reach it — ' + A.trace.length + ' steps, from the phone menu to the follow-up journey.</p>';
+    }
+    function show(id) {
+      var c = comps[id];
+      sel = id;
+      $$('.ac', map).forEach(function (b) { b.classList.toggle('sel', b.dataset.id === id); });
+      if (!c) { overview(); return; }
+      var s = STATUS[c.status];
+      detail.innerHTML = '<span class="tag tag-' + s[1] + '">' + s[0] + '</span><h3>' + esc(c.name) + '</h3><p class="muted" style="font-size:13px">' + esc(kindLabel[c.kind] || '') + '</p>' +
+        '<h4>In this prototype</h4><p>' + esc(c.poc) + '</p>' +
+        '<h4>In the target architecture</h4><ul>' + c.items.map(function (i) { return '<li>' + esc(i) + '</li>'; }).join('') + '</ul>' +
+        ((c.agents || []).length ? '<h4>Agents that work here</h4><div class="who">' + c.agents.map(function (a) {
+          return '<span><b>' + a.n + '</b>' + esc(a.name) + '</span>';
+        }).join('') + '</div>' : '') +
+        '<p style="margin-top:20px"><button class="link" type="button" id="archBack">Back to the overview</button></p>';
+    }
+    function dim() {
+      $$('.ac', map).forEach(function (b) { b.classList.toggle('dim', !!filter && b.dataset.status !== filter); });
+      $$('.aconn', map).forEach(function (b) { b.classList.toggle('dim', !!filter); });
+      $$('#archFilter .chip').forEach(function (b) {
+        var on = b.dataset.k === filter;
+        b.classList.toggle('on', on); b.setAttribute('aria-pressed', on ? 'true' : 'false');
+      });
+    }
+
+    // Following a contact: one block lit at a time, in the order the contact reaches them.
+    function light(i) {
+      step = i;
+      var t = A.trace[i];
+      $$('.lit', map).forEach(function (n) { n.classList.remove('lit'); n.classList.add('seen'); });
+      var node = $('[data-id="' + t.target + '"]', map);
+      if (node) {
+        node.classList.remove('seen'); node.classList.add('lit');
+        var r = node.getBoundingClientRect();
+        if (r.top < 150 || r.bottom > window.innerHeight - 20) {
+          window.scrollTo({ top: window.scrollY + r.top - Math.max(170, (window.innerHeight - r.height) / 2), behavior: calm ? 'auto' : 'smooth' });
+        }
+      }
+      cap.hidden = false;
+      cap.innerHTML = '<b>' + (i + 1) + ' of ' + A.trace.length + '</b><div><strong>' + esc(comps[t.target] ? comps[t.target].name : 'Between the layers') +
+        '</strong><span>' + esc(t.caption) + '</span></div>';
+      if (comps[t.target]) show(t.target);
+    }
+    function stop(done) {
+      playing = false; clearTimeout(timer);
+      $('#archPlay').textContent = done ? 'Follow it again' : (step >= 0 ? 'Carry on' : 'Follow one contact through it');
+    }
+    function tick() {
+      if (!playing) return;
+      if (step >= A.trace.length - 1) { stop(true); return; }
+      light(step + 1);
+      timer = setTimeout(tick, calm ? 3200 : 2700);
+    }
+    function clear() {
+      $$('.lit,.seen', map).forEach(function (n) { n.classList.remove('lit', 'seen'); });
+      step = -1; cap.hidden = true;
+    }
+    $('#archPlay').addEventListener('click', function () {
+      if (playing) { stop(false); return; }
+      if (step >= A.trace.length - 1) clear();
+      filter = null; dim();
+      playing = true; this.textContent = 'Pause'; tick();
+    });
+    $('#archNext').addEventListener('click', function () { stop(false); filter = null; dim(); light(Math.min(A.trace.length - 1, step + 1)); if (step >= A.trace.length - 1) stop(true); });
+    $('#archPrev').addEventListener('click', function () { stop(false); filter = null; dim(); light(Math.max(0, step - 1)); });
+    map.addEventListener('click', function (e) {
+      var b = e.target.closest('.ac'); if (!b) return;
+      if (playing) stop(false);
+      show(b.dataset.id);
+      if (window.innerWidth <= 1080) { var r = detail.getBoundingClientRect(); if (r.top > window.innerHeight - 120) window.scrollTo({ top: window.scrollY + r.top - 150, behavior: calm ? 'auto' : 'smooth' }); }
+    });
+    detail.addEventListener('click', function (e) { if (e.target.id === 'archBack') { sel = null; show(null); } });
+    $('#archFilter').addEventListener('click', function (e) {
+      var b = e.target.closest('.chip'); if (!b) return;
+      filter = filter === b.dataset.k ? null : b.dataset.k;
+      if (filter) { stop(false); clear(); $('#archPlay').textContent = 'Follow one contact through it'; }
+      dim();
+    });
+    overview();
+  })();
+
   // ── agents and coverage ────────────────────────────────────────────────
   (function () {
     var A = D.architecture;

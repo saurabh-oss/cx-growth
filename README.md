@@ -506,6 +506,11 @@ separately), guardrail evidence, and a phased roadmap.
 
 ## Coverage of the target architecture
 
+![The target architecture, with what is built and what is not](docs/shots/architecture.webp)
+
+The [website](https://saurabh-oss.github.io/icx-growth/#architecture) has this as an interactive
+diagram: select a component to read what is real, or follow one contact through all of it.
+
 | Status | Count | Components |
 |---|---|---|
 | **Built** | 3 | Agent Console, AI Agent Assist, AI-Predictive Routing |

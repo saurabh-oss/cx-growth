@@ -39,6 +39,7 @@ document.documentElement.setAttribute("data-theme",t)})();
       <a href="#call">A call</a>
       <a href="#learning">Learning</a>
       <a href="#platform">Platform</a>
+      <a href="#architecture">Architecture</a>
       <a href="#honest">What is real</a>
       <a href="#start">Run it</a>
     </nav>
@@ -354,8 +355,36 @@ document.documentElement.setAttribute("data-theme",t)})();
   </div>
 </section>
 
+<!-- ═══ ARCHITECTURE ═══════════════════════════════════════════════════ -->
+<section class="section section-alt" id="architecture">
+  <div class="wrap">
+    <div class="head reveal">
+      <p class="kicker">The fit</p>
+      <h2>The target architecture — and how much of it already runs</h2>
+      <p class="sub">Seventeen building blocks, from the phone menu to the customer's record. Select any one to
+        read what is real in the prototype and what is a stand-in, or follow a single contact through all of it.</p>
+    </div>
+    <div class="arch card reveal">
+      <div class="arch-bar">
+        <div class="chips" id="archFilter" role="group" aria-label="Show by status"></div>
+        <div class="controls">
+          <button class="btn btn-sm btn-primary" id="archPlay" type="button">Follow one contact through it</button>
+          <button class="btn btn-sm btn-ghost" id="archPrev" type="button" aria-label="Previous step">‹</button>
+          <button class="btn btn-sm btn-ghost" id="archNext" type="button" aria-label="Next step">›</button>
+        </div>
+      </div>
+      <div class="arch-caption" id="archCaption" aria-live="polite" hidden></div>
+      <div class="arch-grid">
+        <div class="arch-map" id="archMap"></div>
+        <aside class="arch-detail"><div class="arch-detail-in" id="archDetail" aria-live="polite"></div></aside>
+      </div>
+      <div class="legend arch-legend" id="archLegend"></div>
+    </div>
+  </div>
+</section>
+
 <!-- ═══ AGENTS ═════════════════════════════════════════════════════════ -->
-<section class="section section-alt" id="agents">
+<section class="section" id="agents">
   <div class="wrap">
     <div class="head reveal">
       <p class="kicker">Coverage</p>
@@ -367,7 +396,7 @@ document.documentElement.setAttribute("data-theme",t)})();
 </section>
 
 <!-- ═══ HONEST ═════════════════════════════════════════════════════════ -->
-<section class="section" id="honest">
+<section class="section section-alt" id="honest">
   <div class="wrap">
     <div class="head reveal">
       <p class="kicker">Read this first</p>
@@ -381,7 +410,7 @@ document.documentElement.setAttribute("data-theme",t)})();
 </section>
 
 <!-- ═══ SCREENS ════════════════════════════════════════════════════════ -->
-<section class="section section-alt" id="screens">
+<section class="section" id="screens">
   <div class="wrap">
     <div class="head reveal">
       <p class="kicker">The application</p>
@@ -394,7 +423,7 @@ document.documentElement.setAttribute("data-theme",t)})();
 </section>
 
 <!-- ═══ START ══════════════════════════════════════════════════════════ -->
-<section class="section" id="start">
+<section class="section section-alt" id="start">
   <div class="wrap">
     <div class="head reveal">
       <p class="kicker">Run it</p>
