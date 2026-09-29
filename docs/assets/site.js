@@ -28,9 +28,9 @@
     if (o && typeof o === 'object') { var r = {}; Object.keys(o).forEach(function (k) { r[k] = unpack(o[k]); }); return r; }
     return o;
   };
-  var TONE = { blue: '#5b9dff', amber: '#f6b94a', green: '#2fd6a3', purple: '#9b7bff', violet: '#9b7bff', red: '#ff6b6b', neutral: '#94a3b8', grey: '#94a3b8' };
-  var OK = '<svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true"><circle cx="10" cy="10" r="9" fill="rgba(47,214,163,.16)"/><path d="m6 10.3 2.7 2.7L14 7.6" fill="none" stroke="#2fd6a3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-  var NO = '<svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true"><circle cx="10" cy="10" r="9" fill="rgba(255,107,107,.18)"/><path d="m7 7 6 6m0-6-6 6" fill="none" stroke="#ff6b6b" stroke-width="2" stroke-linecap="round"/></svg>';
+  var TONE = { blue: 'var(--blue)', amber: 'var(--amber)', green: 'var(--green)', purple: 'var(--violet)', violet: 'var(--violet)', red: 'var(--red)', neutral: 'var(--muted)', grey: 'var(--muted)' };
+  var OK = '<svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true"><circle cx="10" cy="10" r="9" fill="rgba(47,214,163,.16)"/><path d="m6 10.3 2.7 2.7L14 7.6" fill="none" style="stroke:var(--green)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  var NO = '<svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true"><circle cx="10" cy="10" r="9" fill="rgba(255,107,107,.18)"/><path d="m7 7 6 6m0-6-6 6" fill="none" style="stroke:var(--red)" stroke-width="2" stroke-linecap="round"/></svg>';
 
   function countTo(node, to, opt) {
     opt = opt || {};
@@ -55,6 +55,29 @@
     io.observe(node);
   }
 
+  // ── theme ──────────────────────────────────────────────────────────────
+  (function () {
+    var root = document.documentElement, btn = $('#themeBtn'), chosen = false;
+    try { chosen = /^(light|dark)$/.test(localStorage.getItem('ge-theme') || ''); } catch (e) { /* private mode */ }
+    function apply(t, remember) {
+      root.setAttribute('data-theme', t);
+      if (remember) { chosen = true; try { localStorage.setItem('ge-theme', t); } catch (e) { /* private mode */ } }
+      var other = t === 'light' ? 'dark' : 'light';
+      btn.setAttribute('aria-label', 'Switch to the ' + other + ' theme');
+      btn.title = 'Switch to the ' + other + ' theme';
+      $('#themeColor').setAttribute('content', t === 'light' ? '#f6f8fc' : '#070b16');
+      document.dispatchEvent(new Event('themechange'));
+    }
+    btn.addEventListener('click', function () { apply(root.getAttribute('data-theme') === 'light' ? 'dark' : 'light', true); });
+    // Follow the system for as long as the visitor has not chosen for themselves.
+    if (window.matchMedia) {
+      var mq = window.matchMedia('(prefers-color-scheme: light)');
+      var follow = function (e) { if (!chosen) apply(e.matches ? 'light' : 'dark', false); };
+      if (mq.addEventListener) mq.addEventListener('change', follow); else if (mq.addListener) mq.addListener(follow);
+    }
+    apply(root.getAttribute('data-theme') === 'light' ? 'light' : 'dark', false);
+  })();
+
   // ── navigation ─────────────────────────────────────────────────────────
   (function () {
     var nav = $('#nav');
@@ -75,12 +98,35 @@
   // ── hero: economics, stats ─────────────────────────────────────────────
   (function () {
     var E = D.economics;
-    var vals = { cost: E.cost_per_contact, target: E.revenue_per_contact_target, offset: E.cost_offset_pct };
+    // The card shows a relation, not figures: a cost that stays level and a return that
+    // climbs towards it. How far it climbs is the engine's own ratio of return to cost.
+    (function () {
+      var ratio = Math.max(0.1, Math.min(1, E.revenue_per_contact_target / E.cost_per_contact));
+      var w = 360, h = 190, l = 8, r = 352, top = 34, base = 156;
+      var y0 = base - 0.08 * (base - top), y1 = base - ratio * (base - top);
+      var curve = 'M' + l + ' ' + y0 + ' C ' + (l + 130) + ' ' + (y0 - 2) + ', ' + (r - 120) + ' ' + (y1 + 46) + ', ' + r + ' ' + y1;
+      $('#econChart').innerHTML =
+        '<svg viewBox="0 0 ' + w + ' ' + h + '" role="img" aria-label="The cost of handling a conversation stays level. What the conversation returns starts low and rises towards it.">' +
+        '<defs><linearGradient id="gEcon" x1="0" y1="0" x2="0" y2="1"><stop offset="0" style="stop-color:var(--green)" stop-opacity=".42"/><stop offset="1" style="stop-color:var(--green)" stop-opacity="0"/></linearGradient>' +
+        '<linearGradient id="gLine" gradientUnits="userSpaceOnUse" x1="' + l + '" y1="0" x2="' + r + '" y2="0"><stop offset="0" style="stop-color:var(--blue)"/><stop offset="1" style="stop-color:var(--green)"/></linearGradient></defs>' +
+        '<line x1="' + l + '" x2="' + r + '" y1="' + base + '" y2="' + base + '" style="stroke:var(--line-2)"/>' +
+        '<line x1="' + l + '" x2="' + r + '" y1="' + top + '" y2="' + top + '" style="stroke:var(--muted)" stroke-width="2" stroke-dasharray="5 6"/>' +
+        '<text x="' + l + '" y="' + (top - 12) + '" style="fill:var(--soft)">Cost to handle</text>' +
+        '<path class="area" d="' + curve + ' L' + r + ' ' + base + ' L' + l + ' ' + base + ' Z" fill="url(#gEcon)"/>' +
+        '<path class="ret" pathLength="1" d="' + curve + '" fill="none" stroke="url(#gLine)" stroke-width="3.5" stroke-linecap="round"/>' +
+        '<g class="gap"><line x1="' + r + '" x2="' + r + '" y1="' + (top + 5) + '" y2="' + (y1 - 11) + '" style="stroke:var(--muted)" stroke-dasharray="2 4"/></g>' +
+        '<g class="tip"><circle class="halo" cx="' + r + '" cy="' + y1 + '" r="7" style="fill:var(--green)"/>' +
+        '<circle cx="' + r + '" cy="' + y1 + '" r="6" style="fill:var(--green);stroke:var(--bg)" stroke-width="2.5"/>' +
+        '<text x="' + (r - 16) + '" y="' + (y1 - 9) + '" text-anchor="end" style="fill:var(--green)">Return</text></g>' +
+        '<text x="' + l + '" y="' + (base + 20) + '" style="fill:var(--muted)">Today</text>' +
+        '<text x="' + r + '" y="' + (base + 20) + '" text-anchor="end" style="fill:var(--muted)">With the engine</text>' +
+        '</svg>';
+      var p = E.cost_offset_pct;
+      $('#econWords').textContent = p >= 75 ? 'Most of it' : p >= 50 ? 'More than half' : p >= 25 ? 'A good part of it' : 'A first part of it';
+    })();
     onSeen($('.econ'), function () {
-      $$('[data-count]').forEach(function (n) {
-        countTo(n, vals[n.dataset.count], { prefix: n.dataset.prefix, suffix: n.dataset.suffix, dp: +n.dataset.dp || 0 });
-      });
-      setTimeout(function () { $('#econFill').style.width = E.cost_offset_pct + '%'; }, 120);
+      $('.econ').classList.add('go');
+      setTimeout(function () { $('#econFill').style.width = E.cost_offset_pct + '%'; }, 900);
     }, '0px');
 
     var F = D.funnel;
@@ -112,7 +158,12 @@
     var n = { all: 0, sell: 0, solve: 0, held: 0 };
     var pSell = D.rates.triage;
     var pHeld = D.guardrail_evidence.overrides / D.funnel[0].value;
-    var COL = { wait: [148, 163, 184], sell: [47, 214, 163], solve: [91, 157, 255], held: [255, 107, 107] };
+    var DARK = { wait: [148, 163, 184], sell: [47, 214, 163], solve: [91, 157, 255], held: [255, 107, 107], gate: 'rgba(255,255,255,.2)' };
+    var LIGHT = { wait: [100, 116, 139], sell: [11, 143, 104], solve: [37, 99, 235], held: [208, 58, 58], gate: 'rgba(15,23,42,.28)' };
+    var COL = DARK;
+    var paint = function () { COL = document.documentElement.getAttribute('data-theme') === 'light' ? LIGHT : DARK; };
+    paint();
+    document.addEventListener('themechange', function () { paint(); if (!running) { draw(); } });
 
     function size() {
       var dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -140,7 +191,7 @@
           p.done = true;
           n.all++; n[p.kind]++;
           if (p.kind === 'held') n.solve++;
-          p.ty = p.kind === 'sell' ? H * (0.13 + 0.17 * Math.random()) : H * (0.66 + 0.26 * Math.random());
+          p.ty = p.kind === 'sell' ? H * (0.17 + 0.17 * Math.random()) : H * (0.6 + 0.21 * Math.random());
           if (p.kind === 'held') p.flash = 1;
         }
         if (p.done) p.y += (p.ty - p.y) * Math.min(1, dt * 2.4);
@@ -154,7 +205,7 @@
       ctx.fillStyle = 'rgba(0,0,0,.17)';
       ctx.fillRect(0, 0, W, H);
       ctx.globalCompositeOperation = 'source-over';
-      ctx.strokeStyle = 'rgba(255,255,255,.2)';
+      ctx.strokeStyle = COL.gate;
       ctx.setLineDash([4, 7]); ctx.lineWidth = 1;
       ctx.beginPath(); ctx.moveTo(gx, 44); ctx.lineTo(gx, H - 14); ctx.stroke();
       ctx.setLineDash([]);
@@ -359,16 +410,16 @@
       var rev = line(function (s) { return yr(s.revenue_day); });
       var pre = line(function (s) { return yp(s.precision); });
       var ticks = S.map(function (s, k) {
-        return k % 2 ? '' : '<text x="' + x(k) + '" y="' + (h - 8) + '" text-anchor="middle" font-size="11" fill="#8793ab" font-family="Inter,sans-serif">' + pct(s.threshold) + '%</text>';
+        return k % 2 ? '' : '<text x="' + x(k) + '" y="' + (h - 8) + '" text-anchor="middle" font-size="11" style="fill:var(--muted)" font-family="Inter,sans-serif">' + pct(s.threshold) + '%</text>';
       }).join('');
       $('#dialChart').innerHTML =
-        '<defs><linearGradient id="gRev" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2fd6a3" stop-opacity=".3"/><stop offset="1" stop-color="#2fd6a3" stop-opacity="0"/></linearGradient></defs>' +
+        '<defs><linearGradient id="gRev" x1="0" y1="0" x2="0" y2="1"><stop offset="0" style="stop-color:var(--green)" stop-opacity=".3"/><stop offset="1" style="stop-color:var(--green)" stop-opacity="0"/></linearGradient></defs>' +
         '<path d="' + rev + ' L' + x(S.length - 1) + ' ' + (h - b) + ' L' + x(0) + ' ' + (h - b) + ' Z" fill="url(#gRev)"/>' +
-        '<path d="' + rev + '" fill="none" stroke="#2fd6a3" stroke-width="2.5" stroke-linejoin="round"/>' +
-        '<path d="' + pre + '" fill="none" stroke="#9b7bff" stroke-width="2.5" stroke-linejoin="round" stroke-dasharray="1 0"/>' +
-        '<line x1="' + x(i) + '" x2="' + x(i) + '" y1="' + t + '" y2="' + (h - b) + '" stroke="#fff" stroke-opacity=".55" stroke-width="1.5"/>' +
-        '<circle cx="' + x(i) + '" cy="' + yr(S[i].revenue_day) + '" r="5.5" fill="#2fd6a3" stroke="#070b16" stroke-width="2"/>' +
-        '<circle cx="' + x(i) + '" cy="' + yp(S[i].precision) + '" r="5.5" fill="#9b7bff" stroke="#070b16" stroke-width="2"/>' + ticks;
+        '<path d="' + rev + '" fill="none" style="stroke:var(--green)" stroke-width="2.5" stroke-linejoin="round"/>' +
+        '<path d="' + pre + '" fill="none" style="stroke:var(--violet)" stroke-width="2.5" stroke-linejoin="round"/>' +
+        '<line x1="' + x(i) + '" x2="' + x(i) + '" y1="' + t + '" y2="' + (h - b) + '" style="stroke:var(--mark)" stroke-opacity=".55" stroke-width="1.5"/>' +
+        '<circle cx="' + x(i) + '" cy="' + yr(S[i].revenue_day) + '" r="5.5" style="fill:var(--green);stroke:var(--bg)" stroke-width="2"/>' +
+        '<circle cx="' + x(i) + '" cy="' + yp(S[i].precision) + '" r="5.5" style="fill:var(--violet);stroke:var(--bg)" stroke-width="2"/>' + ticks;
     }
     function set(i) {
       var s = S[i], z = S[base];
@@ -616,7 +667,7 @@
     var C = 2 * Math.PI * 58, off = 0;
     var arcs = parts.map(function (p) {
       var len = (s[p[0]] || 0) / total * C;
-      var a = '<circle cx="75" cy="75" r="58" stroke="' + p[2] + '" stroke-dasharray="' + Math.max(0, len - 3) + ' ' + (C - len + 3) + '" stroke-dashoffset="' + (-off) + '"/>';
+      var a = '<circle cx="75" cy="75" r="58" style="stroke:' + p[2] + '" stroke-dasharray="' + Math.max(0, len - 3) + ' ' + (C - len + 3) + '" stroke-dashoffset="' + (-off) + '"/>';
       off += len;
       return a;
     }).join('');
