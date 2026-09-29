@@ -2,5 +2,6 @@
 *.bat text eol=crlf
 *.woff2 binary
 *.png binary
+*.webp binary
 frontend/vendor/*.js linguist-vendored
 frontend/vendor/** linguist-vendored

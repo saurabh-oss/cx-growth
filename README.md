@@ -9,6 +9,8 @@ ends as a qualified lead. One that contains a complaint never becomes a sales pi
 
 It runs on one laptop, offline, with one command. There is no build step.
 
+**[Try the decision engine in your browser →](https://saurabh-oss.github.io/icx-growth/)**
+
 ![Overview](docs/overview.png)
 
 > **The company in this repository is fictional.** Acme, its products and its delivery
@@ -618,7 +620,9 @@ icx-growth/
 │   └── docker-compose.yml   Apache Unomi and Elasticsearch
 ├── tests/
 │   └── test_engine.py       38 tests
-├── docs/                    Screenshots
+├── docs/                    The project website (GitHub Pages) and screenshots
+├── tools/
+│   └── build_site_data.py   Exports the engine's results for the website
 ├── requirements.txt
 ├── run.bat · run.sh
 ├── LICENSE · THIRD-PARTY-NOTICES.md
@@ -626,6 +630,19 @@ icx-growth/
 ```
 
 `backend/leads.db` and `backend/icx.db` are created at run time. Both can be deleted.
+
+## The website
+
+`docs/` is a static site, served by GitHub Pages from the `main` branch. It has no build step
+and no framework. Its interactive parts do not re-implement the engine: every decision and
+figure they show is computed by the engine and exported by
+
+```bash
+python tools/build_site_data.py
+```
+
+Run that after changing the model, the profiles or the scenarios, and commit
+`docs/assets/data.js`. To preview the site: `python -m http.server --directory docs`.
 
 ## Licence
 
