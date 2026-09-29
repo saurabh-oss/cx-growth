@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Created at run time
+*.db
+*.db-journal
+
+# Your own brand pack: real names, logos and endpoints stay on your machine
+brand/local.json
+brand/*.local.json
+
+# Secrets and local settings
+.env
+.env.*
+!.env.example
+
+# Presentation material is not part of the repository
+*.pptx
+*.ppt
+*.key
+
+# Editors and operating systems
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

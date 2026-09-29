@@ -1,0 +1,6 @@
+# Version floors rather than hard pins: the original pins (pydantic 2.10.4) predate
+# Python 3.13/3.14 and have no matching wheels, forcing a source build that fails.
+fastapi>=0.115
+uvicorn>=0.34
+pydantic>=2.12
+anthropic>=0.70

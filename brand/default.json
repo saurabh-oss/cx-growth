@@ -1,0 +1,85 @@
+{
+  "about": "The company as shipped. It is fictional: Acme and its products do not exist, and neither does Globex. Copy this file to local.json and change the right-hand side of each name to show the demo as a real company. local.json is ignored by git.",
+  "names": {},
+  "example_names": {
+    "AQL": "AQL",
+    "AXP": "AXP",
+    "Acme": "Acme",
+    "ActivityEvent": "ActivityEvent",
+    "Brand Assistant": "Brand Assistant",
+    "ClipForge": "ClipForge",
+    "ContentVault": "ContentVault",
+    "Docs Cloud": "Docs Cloud",
+    "DocuForge": "DocuForge",
+    "Engage Cloud": "Engage Cloud",
+    "GenForge": "GenForge",
+    "Globex": "Globex",
+    "Globex Consulting Services": "Globex Consulting Services",
+    "Glowfly": "Glowfly",
+    "Journey Composer": "Journey Composer",
+    "LeadForge": "LeadForge",
+    "LightVault": "LightVault",
+    "MotionForge": "MotionForge",
+    "ODM": "ODM",
+    "Open Data Model": "Open Data Model",
+    "PageForge": "PageForge",
+    "PhotoForge": "PhotoForge",
+    "ReelRoom": "ReelRoom",
+    "ShapeForge": "ShapeForge",
+    "Studio Cloud": "Studio Cloud",
+    "VectorForge": "VectorForge",
+    "WorkForge": "WorkForge",
+    "_icxdemo": "_icxdemo",
+    "acme": "acme",
+    "clipforge": "clipforge",
+    "docs cloud": "docs cloud",
+    "docuforge": "docuforge",
+    "engage cloud": "engage cloud",
+    "glowfly": "glowfly",
+    "lightvault": "lightvault",
+    "photoforge": "photoforge",
+    "studio cloud": "studio cloud",
+    "studiocloud": "studiocloud",
+    "vectorforge": "vectorforge"
+  },
+  "schema_name": "Acme Open Data Model (ODM)",
+  "schema_source": null,
+  "logo": {
+    "viewBox": "0 0 100 100",
+    "shapes": [
+      {
+        "d": "M50 6 92 30v40L50 94 8 70V30z"
+      },
+      {
+        "d": "M50 30 71 42v22L50 76 29 64V42z",
+        "fill": "#ffffff"
+      }
+    ]
+  },
+  "partner": {
+    "colour": "#1f3a5f"
+  },
+  "vendor_api": {
+    "label": "Acme Experience Platform",
+    "api": "https://platform.example.com",
+    "ingest": "https://ingest.example.com",
+    "channel_ns": "https://ns.example.com/channel-types",
+    "access_path": "/profile/entities",
+    "audience_path": "/audience/definitions",
+    "content_type": "application/json",
+    "org_header": "x-org-id",
+    "sandbox_header": "x-sandbox-name",
+    "org_field": "orgId",
+    "meta_field": "meta",
+    "entity_field": "entity",
+    "profile_schema": "profile",
+    "event_schema": "activityevent",
+    "membership_field": "audienceMembership",
+    "membership_group": "default",
+    "query_type": "AQL",
+    "query_format": "aql/text",
+    "ingest_api": "Streaming ingestion API",
+    "access_api": "Profile access API",
+    "audience_api": "Audience definition API"
+  }
+}

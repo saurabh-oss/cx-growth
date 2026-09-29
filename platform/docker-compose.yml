@@ -1,0 +1,44 @@
+# Apache Unomi — the open-source customer data platform that stands in for
+# the vendor's own experience platform in this POC.
+#
+#   Start:   docker compose up -d          (from this folder; first start pulls ~1.5 GB)
+#   Check:   curl -u karaf:karaf http://localhost:8181/cxs/cluster
+#   Use it:  set CUSTOMER_PLATFORM=unomi   then start the app as usual
+#   Stop:    docker compose stop           (keeps the data)
+#   Remove:  docker compose down -v        (deletes the data)
+#
+# The app never depends on this. With CUSTOMER_PLATFORM unset, or with these containers
+# stopped, it uses its built-in profile store and everything still works.
+#
+# Versions are pinned to a pair that has been run together on this machine:
+# Unomi 3.0.0 needs Elasticsearch 9.x.
+#
+# The credentials below are Unomi's defaults and the ports are bound to localhost only.
+# This is a demo configuration. Do not expose it to a network.
+
+name: icx-unomi
+
+services:
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.1.5
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms1g -Xmx1g
+    ports:
+      - "127.0.0.1:9200:9200"
+    volumes:
+      - unomi-es:/usr/share/elasticsearch/data
+
+  unomi:
+    image: apache/unomi:3.0.0
+    depends_on:
+      - elasticsearch
+    environment:
+      - UNOMI_ELASTICSEARCH_ADDRESSES=elasticsearch:9200
+      - UNOMI_THIRDPARTY_PROVIDER1_IPADDRESSES=0.0.0.0/0,::1,127.0.0.1
+    ports:
+      - "127.0.0.1:8181:8181"
+
+volumes:
+  unomi-es:
