@@ -108,7 +108,7 @@ PROFILES = {
                "usageTrendPct": 28},
         service={"lastContactDays": 290, "contacts90d": 0},
         health={"score": 84, "nps": 8},
-        commercial={"offersDeclined12m": 0, "commercialUse": "Freelance vectorforge"}),
+        commercial={"offersDeclined12m": 0, "commercialUse": "Freelance designer"}),
 
     "robert-signin": _p(
         pid="robert-nkemelu", first="Robert", last="Nkemelu", email="robert.nkemelu@example.com", phone="+44 7700 900129",

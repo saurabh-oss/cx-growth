@@ -812,6 +812,7 @@
       ['Unscripted contact', 'Real', 'real', 'Type or speak as the customer. A rules engine detects signals, scores and recommends. No API key is needed.'],
       ['Quality scoring and knowledge search', 'Real', 'real', 'Each runs on whatever transcript or question it is given.'],
       ['Write-back', 'Real', 'real', 'Wrap-up writes events to the profile. The next decision for that customer reflects them.'],
+      ['Training mode', 'Real', 'real', 'An agent takes a mock call in audio. The customer is a rules-based persona built from the demo contacts; the debrief is the quality agent’s score.'],
       ['Traffic', 'Synthetic', 'made', '9,200 contacts a day from a generated population of 6,000 customers. There is no real customer data anywhere.'],
       ['The nine guided contacts', 'Scripted', 'made', 'Conversation and analysis are written in advance, so the demo lands the same way every time.'],
       ['Knowledge articles and prices', 'Illustrative', 'made', 'Plausible, and invented.'],
@@ -887,7 +888,7 @@
       nix: ['git clone ' + REPO + '\ncd icx-growth\n./run.sh', 'Installs four Python packages, starts the server and opens http://localhost:8000.'],
       unomi: ['cd platform && docker compose up -d && cd ..\nexport CUSTOMER_PLATFORM=unomi     # Windows: set CUSTOMER_PLATFORM=unomi\npython backend/main.py',
         'Needs Docker. The first start pulls about 1.5 GB. If Unomi is not reachable the app says so and uses the built-in store.'],
-      test: ['python -m unittest discover -s tests -v', '38 tests, about five seconds, no server and no network. With Unomi running, the platform tests run against it as well.']
+      test: ['python -m unittest discover -s tests -v', '43 tests, about five seconds, no server and no network. With Unomi running, the platform tests run against it as well.']
     };
     var k = 'win';
     if (/Mac|Linux|X11/.test(navigator.platform || '') && !/Win/.test(navigator.platform || '')) k = 'nix';

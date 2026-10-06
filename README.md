@@ -51,6 +51,7 @@ same way as this table.
 | **Unscripted contact** | Real | Type or speak as the customer. A rules engine detects signals, scores and recommends. No API key needed. |
 | **Quality scoring, knowledge retrieval, self-service** | Real | Each runs on whatever transcript or question it is given. |
 | **Write-back** | Real | Wrap-up writes events to the profile; the next decision for that customer reflects them. |
+| **Training mode** | Real | A human agent takes a mock call in audio. The customer is played by a rules-based persona built from the demo contacts; the scoring and debrief are the quality agent's. |
 | **Traffic** | **Synthetic** | 9,200 contacts a day from a generated population of 6,000 customers. No real customer data anywhere. |
 | **The nine guided contacts** | **Scripted** | Conversation and analysis are written in advance so the demo lands the same way every time. |
 | **Knowledge articles and prices** | **Illustrative** | Plausible, invented. |
@@ -98,7 +99,7 @@ The first start pulls about 1.5 GB and takes a minute or two. If Unomi is not re
 the app says so at start-up and uses the built-in store — a stopped container cannot
 take the demo down. `docker compose stop` in `platform/` stops it and keeps the data.
 
-**Run the tests.** 38 tests, about five seconds, no server and no network.
+**Run the tests.** 43 tests, about five seconds, no server and no network.
 
 ```bash
 python -m unittest discover -s tests -v
@@ -421,6 +422,39 @@ by the browser from the transcript. There is no recording, and it works offline.
 
 ---
 
+## Training mode — practise a call
+
+**Practice a call**, under *For agents* in the menu, or `?page=training`. The roles of the
+live contact are reversed: the engine plays the customer and a human agent takes the call.
+
+- **It is a phone call.** The softphone rings. The agent presses Accept, the customer
+  speaks first — synthesised in the browser, in a customer's voice — and the agent answers
+  out loud. The microphone opens by itself after each customer turn (hands-free), or on a
+  push-to-talk button; typing always works. Nothing is recorded.
+- **The customer is a persona, not a recording.** Each of the nine demo contacts becomes a
+  persona whose story is the customer's side of the scripted call. What moves the story
+  forward is what the scripted agent did at that point — classified by the same detector
+  the trainee's words go through. Do what a good agent does and the call flows; stall and
+  the customer stalls; sell into a complaint and the customer gets angry. Three
+  difficulties add objections and a shorter fuse.
+- **Everything the workspace does happens behind it** — signals heard, the opportunity
+  score, the engine's decision, the customer's mood as it moves — plus a live checklist of
+  what the call needs. Advice is hidden behind a **Hint** button, and hints are counted.
+- **The debrief** is the quality agent's score with its evidence, the checklist, how the
+  customer felt from start to finish, the one thing to work on next, and the scripted
+  call as *one good way to handle it*. Results are kept in the browser.
+
+The persona is `backend/trainer.py`: a rules engine, like the conversation engine beside
+it. With `ANTHROPIC_API_KEY` set, Claude voices the customer's lines so they answer the
+agent's exact words; the rules still decide what the customer does. The scripted agent is
+tested against every persona, so a trainee who says what the script says always reaches
+a good ending — and selling to Elena always fails compliance.
+
+> The microphone uses the browser's speech service, which may send audio to the browser
+> vendor. The customer's voice depends on the voices installed on the machine.
+
+---
+
 ## After the contact
 
 **Quality — scored automatically.** Every contact is scored on service, sales execution
@@ -612,6 +646,7 @@ icx-growth/
 │   ├── nlu.py               Conversation engine for unscripted contacts
 │   ├── knowledge.py         Articles, retrieval, self-service
 │   ├── quality.py           Quality scoring
+│   ├── trainer.py           Training mode: the customer persona and the debrief
 │   ├── voc.py               Voice of Customer themes
 │   ├── journey.py           Write-back, journey, case, next-contact preview
 │   ├── architecture.py      The target architecture and the seven agents
@@ -624,7 +659,7 @@ icx-growth/
 ├── platform/
 │   └── docker-compose.yml   Apache Unomi and Elasticsearch
 ├── tests/
-│   └── test_engine.py       38 tests
+│   └── test_engine.py       43 tests
 ├── docs/                    The project website (GitHub Pages) and screenshots
 ├── tools/
 │   └── build_site_data.py   Exports the engine's results for the website

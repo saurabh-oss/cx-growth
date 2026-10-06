@@ -599,7 +599,7 @@ SCENARIOS = [
              "delay": 5},
             {"role": "customer", "lang": "es",
              "text": "Unos quince. Soy ilustradora autónoma y cada vez tengo más clientes, algunos fuera de España. Esperar a que me devuelvan el papel firmado me retrasa los proyectos una semana.",
-             "text_en": "About fifteen. I'm a freelance vectorforge and I have more and more clients, some of them outside Spain. Waiting for the signed paper to come back delays my projects by a week.",
+             "text_en": "About fifteen. I'm a freelance designer and I have more and more clients, some of them outside Spain. Waiting for the signed paper to come back delays my projects by a week.",
              "delay": 11},
             {"role": "agent", "lang": "en",
              "text": "So the illustration side is fine — the delay is in getting documents approved and signed. That's a different tool from the one you have.",

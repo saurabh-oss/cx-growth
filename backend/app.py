@@ -85,6 +85,7 @@ import story as story_mod
 # The engine: what is computed rather than written.
 import brand
 import cdp
+import trainer
 import catalogue as cat
 import demo_profiles as dp
 import frontier_engine as fe
@@ -1030,6 +1031,159 @@ async def live_turn(request: Request):
             payload["source"] = "rules+claude"
             payload["ai"] = r
     return payload
+
+
+# ══════════════════════════════════════
+#  TRAINING — the agent practises; the engine plays the customer
+# ══════════════════════════════════════
+TRAIN = {}
+
+VOICE_SCHEMA = {"type": "object", "properties": {"line": {"type": "string"}}, "required": ["line"], "additionalProperties": False}
+
+
+def _voice_sync(brief, transcript, planned, why):
+    """Claude voices the persona's next line so it answers the agent's exact words. The
+    rules have already decided what the customer does; this only decides how it is said."""
+    client = get_claude_client()
+    prompt = f"""You are playing a customer on a phone call to a software company's support line,
+so that a human agent can practise. Stay in character. Speak as the customer, in the first
+person, in one or two natural spoken sentences. Never help the agent, never sell, never
+break character, never mention that this is practice.
+
+WHO YOU ARE:
+{brief}
+
+THE CALL SO FAR:
+{transcript}
+
+WHAT YOU DO NEXT (decided already — keep this meaning and these facts exactly):
+{planned}
+(The reason you say this: {why}.)
+
+Rewrite that line so it answers what the agent just said, in your own words and mood."""
+    response = client.messages.create(
+        model=MODEL, max_tokens=300,
+        messages=[{"role": "user", "content": prompt}],
+        output_config={"effort": "low", "format": {"type": "json_schema", "schema": VOICE_SCHEMA}},
+    )
+    text = next(b.text for b in response.content if b.type == "text")
+    line = (json.loads(text).get("line") or "").strip()
+    return line if 8 <= len(line) <= 400 else None
+
+
+async def voice_with_claude(brief, transcript, planned, why):
+    if not ai_available():
+        return None
+    try:
+        r = await asyncio.wait_for(asyncio.to_thread(_voice_sync, brief, transcript, planned, why), timeout=AI_TIMEOUT_SECONDS)
+        _ai_state["failures"] = 0
+        return r
+    except Exception as e:                                   # noqa: BLE001 — best effort, never breaks the call
+        _ai_state["failures"] += 1
+        _ai_state["last_error"] = str(e)
+        return None
+
+
+def _training_analysis(s):
+    """The same analysis the live workspace shows, over the training conversation."""
+    p, t = s["persona"], s["treatment"]
+    a = nlu.analyse(s["conversation"], t, p.profile, p.ctx["intent"])
+    routed = a["routed"]
+    lead = _lead_from(t["offer"], a) if a["qualified"] and t.get("offer") else None
+    resolution = None
+    if not routed and s["conversation"]:
+        resolution = {"outcome": "Resolved — no offer made" if a["stage"] == "suppressed" else "Resolved — nothing to sell",
+                      "detail": t["rationale"], "why_no_lead": [t["segment_reason"]] + [g["detail"] for g in t["guardrails"] if not g["pass"]]}
+    return {"signals": a["signals"], "coaching": {**a["coaching"], "sources": a["grounding"]},
+            "lead_score": a["lead_score"], "sentiment": a["sentiment"], "sentiments": a["sentiments"],
+            "triage": {"decision": "growth_engine" if routed else "standard", "propensity": t["propensity"], "reason": t["rationale"],
+                       "suppression": ("service_recovery" if t.get("segment") == "recovery" and t.get("override") else
+                                       (next((g["id"] for g in t["guardrails"] if not g["pass"]), None) if t.get("override") else None)),
+                       "turn": 0, "segment": t["segment"], "model_version": t["model_version"]},
+            "routed_to_engine": routed, "lead_qualified": bool(lead), "lead_summary": lead,
+            "resolution_summary": resolution, "stage": a["stage"], "suggested_replies": a["suggested_replies"]}
+
+
+@app.get("/api/training/options")
+async def training_options():
+    o = trainer.options(learning.champion(), learning.threshold())
+    o["speech"] = {"voice": "Synthesised in the browser from the persona's lines — no recording.",
+                   "microphone": "Browser speech recognition where the browser provides it; typing always works.",
+                   "claude_voices_persona": ai_available()}
+    return o
+
+
+@app.post("/api/training/start")
+async def training_start(request: Request):
+    body = await request.json()
+    sid = body.get("persona")
+    if sid not in trainer.SCENARIO_BY_ID:
+        raise HTTPException(404, "No such customer")
+    s = trainer.start(sid, body.get("difficulty") or "steady", learning.champion(), learning.threshold())
+    p, t = s["persona"], s["treatment"]
+    s["started"] = time.time()
+    TRAIN[s["id"]] = s
+    if len(TRAIN) > 40:
+        for k in sorted(TRAIN, key=lambda k: TRAIN[k]["started"])[:-40]:
+            TRAIN.pop(k, None)
+    await asyncio.to_thread(dp.seed, PLATFORM, sid)
+    sc = trainer.SCENARIO_BY_ID[sid]
+    i = fe.intent(p.ctx["intent"])
+    contact = {**copy.deepcopy(CONTACTS.get(sid, {})), "contact_id": str(uuid.uuid4()), "channel": "VOICE"}
+    contact["queue"] = t["routing"]["queue"]
+    contact["attributes"] = {**contact.get("attributes", {}), "frontierSegment": t["segment"].upper(),
+                             "frontierTreatment": t["decision"].upper(), "frontierPropensity": "%.2f" % t["propensity"],
+                             "frontierModel": t["model_version"], "trainingMode": "TRUE"}
+    opening = p.opening()
+    return {
+        "id": s["id"], "training": True, "title": "Practice — %s" % i["label"],
+        "difficulty": p.difficulty, "focus": trainer.focus_for(sc, t),
+        "customer": _customer_card(p.profile), "contact": contact, "treatment": t,
+        "profile_id": p.profile["_id"], "persona": p.state(),
+        "opening": {"text": opening, "mood": p.state()["mood"], "mood_label": p.state()["mood_label"]},
+        "objectives": p.objectives([]),
+        "analysis": _training_analysis(s),
+        "voice": {"lang": "en-GB", "role": "customer"},
+    }
+
+
+@app.post("/api/training/turn")
+async def training_turn(request: Request):
+    body = await request.json()
+    s = TRAIN.get(body.get("session_id"))
+    if not s:
+        raise HTTPException(404, "Practice call not found — it may have ended")
+    text = (body.get("text") or "").strip()
+    if not text:
+        raise HTTPException(400, "Nothing was said")
+    p = s["persona"]
+    if not s["conversation"]:
+        s["conversation"].append({"role": "customer", "text": p.opening(), "delay": 0})
+    now = int(time.time() - s["started"])
+    s["conversation"].append({"role": "agent", "text": text[:1200], "delay": now})
+    m = trainer.moves(text)
+    reply = p.respond(text, m)
+    if reply["why"] not in ("ended",) and ai_available():
+        brief = "%s. %s. Plan: %s. Mood right now: %s. Reason for calling: %s." % (
+            p.sc["customer"]["name"], p.sc["customer"]["role"], p.sc["customer"]["tier"], reply["mood_label"], p.sc["description"])
+        voiced = await voice_with_claude(brief, _transcript(s["conversation"]), reply["text"], reply["why"])
+        if voiced:
+            reply = {**reply, "text": voiced, "voiced_by": "claude"}
+    s["conversation"].append({"role": "customer", "text": reply["text"], "delay": now + 2})
+    return {"agent_moves": sorted(m), "customer": reply, "persona": p.state(),
+            "objectives": p.objectives(s["conversation"]), "analysis": _training_analysis(s), "ended": p.ended}
+
+
+@app.post("/api/training/end")
+async def training_end(request: Request):
+    body = await request.json()
+    s = TRAIN.get(body.get("session_id"))
+    if not s:
+        raise HTTPException(404, "Practice call not found — it may have ended")
+    d = trainer.debrief(s, hints_used=int(body.get("hints_used") or 0), ended_by=body.get("ended_by") or "agent")
+    d["transcript"] = s["conversation"]
+    d["talk_seconds"] = int(time.time() - s["started"])
+    return d
 
 
 # ══════════════════════════════════════

@@ -348,5 +348,92 @@ class Agents(unittest.TestCase):
         self.assertEqual(round(cat.annual("CC_ALL_APPS") - cat.annual("PHOTO_1TB")), 480)
 
 
+class Training(unittest.TestCase):
+    """The persona that plays the customer when a human agent practises."""
+
+    def persona(self, sid, difficulty="steady"):
+        import trainer
+        t = fd.treatment_for(sid, learning.champion(), learning.threshold())
+        return trainer.Persona(sid, t, difficulty), trainer
+
+    def test_the_scripted_agent_walks_every_persona_to_a_good_ending(self):
+        # A trainee who says what the scripted agent said should get through the whole
+        # story, be accepted where there is something to sell, and score well.
+        import trainer
+        for sc in SCENARIOS:
+            with self.subTest(contact=sc["id"]):
+                p, _ = self.persona(sc["id"])
+                conv = [{"role": "customer", "text": p.opening()}]
+                for line in p.model_answer:
+                    conv.append({"role": "agent", "text": line})
+                    r = p.respond(line)
+                    conv.append({"role": "customer", "text": r["text"]})
+                    if r["ended"]:
+                        break
+                self.assertNotIn("stalled", p.flags, "the scripted agent should never stall the persona")
+                self.assertFalse(any(f.startswith("pitched_on") for f in p.flags))
+                self.assertTrue(p.resolved or p.accepted, "the story should have run its course")
+                if p.sell:
+                    self.assertTrue(p.accepted or p.resolved)
+                s = {"persona": p, "treatment": p.t, "conversation": conv}
+                d = trainer.debrief(s)
+                self.assertEqual(d["quality"]["compliance"], "pass")
+                self.assertGreaterEqual(d["quality"]["overall"], 60, d["quality"]["coaching_note"])
+
+    def test_selling_into_a_complaint_makes_the_customer_angry_and_fails_compliance(self):
+        import trainer
+        p, _ = self.persona("elena-double-charge")
+        conv = [{"role": "customer", "text": p.opening()}]
+        line = "I can see that. While I have you, there's an upgrade option that would suit you — shall I move you to it?"
+        conv.append({"role": "agent", "text": line})
+        r = p.respond(line)
+        conv.append({"role": "customer", "text": r["text"]})
+        self.assertEqual(r["why"], "pitched_when_not_selling")
+        self.assertLess(r["mood"], 0.2)
+        self.assertIn("pitched_on_recovery", p.flags)
+        d = trainer.debrief({"persona": p, "treatment": p.t, "conversation": conv})
+        self.assertEqual(d["quality"]["compliance"], "breach")
+        self.assertLessEqual(d["quality"]["overall"], 49)
+        self.assertTrue(any(o["id"] == "hold" and o["bad"] for o in d["objectives"]))
+
+    def test_pressure_language_is_pushed_back_and_an_early_pitch_is_refused(self):
+        p, _ = self.persona("aisha-storage-full", "steady")
+        r = p.respond("You need to upgrade today, this offer ends tonight.")
+        self.assertEqual(r["why"], "pressure")
+        p2, _ = self.persona("aisha-storage-full", "steady")
+        r2 = p2.respond("Hi Aisha, there's a plan with 1TB of storage, shall I upgrade you?")
+        self.assertEqual(r2["why"], "pitched_early")
+        self.assertIn("pitched_early", p2.flags)
+
+    def test_a_tough_customer_objects_before_accepting_and_a_stall_never_deadlocks(self):
+        p, _ = self.persona("aisha-storage-full", "tough")
+        for line in ["Hi Aisha, thanks for calling. Let me check your storage — I can see you're at 20GB of 20GB.",
+                     "That makes sense. Let me look at what would give you room to work."]:
+            p.respond(line)
+        self.assertTrue(p.resolved or p.beat >= 2)
+        r = p.respond("There's a straightforward option that moves you to 1TB of cloud storage.")
+        self.assertEqual(r["why"], "objection")
+        r = p.respond("It's $9.99 more a month, and it activates straight away.")
+        self.assertEqual(r["why"], "objection")
+        r = p.respond("No — you keep everything you already have, nothing is lost.")
+        self.assertEqual(r["why"], "accepted")
+        self.assertTrue(p.accepted)
+        r = p.respond("Is there anything else I can help with today?")
+        self.assertTrue(r["ended"])
+        # A trainee who only chats never gets stuck: the customer moves on after two stalls.
+        q, _ = self.persona("priya-individual-to-teams")
+        whys = [q.respond("Hello there, lovely weather today.")["why"] for _ in range(3)]
+        self.assertEqual(whys[:2], ["stalled", "stalled"])
+        self.assertEqual(whys[2], "advanced")
+
+    def test_moves_are_detected_in_plain_agent_speech(self):
+        import trainer
+        self.assertIn("verify", trainer.moves("For security, can I just confirm the email address on the account?"))
+        self.assertIn("fix", trainer.moves("I'm processing the refund now and you'll have an email within five minutes."))
+        self.assertIn("offer", trainer.moves("There's a plan built for teams that would suit you."))
+        self.assertIn("close", trainer.moves("Is there anything else I can help you with today?"))
+        self.assertNotIn("offer", trainer.moves("I'm sorry about that, let me take a look at your account."))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

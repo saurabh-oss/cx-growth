@@ -416,6 +416,8 @@ const NAV=[
   {group:'Under the hood',items:[
     {id:'architecture',icon:'layers',label:'Architecture',sub:'The target state, live'},
     {id:'technology',icon:'cpu',label:'Technology',sub:'The engine and the data'}]},
+  {group:'For agents',items:[
+    {id:'training',icon:'mic',label:'Practice a call',sub:'Training mode — you are the agent'}]},
 ];
 const PAGE_IDS=NAV.reduce((a,g)=>a.concat(g.items.map(i=>i.id)),[]);
 
@@ -436,7 +438,7 @@ function TopBar({page,agent,agentState,workspace,onTour,storyRunning,scale,setSc
         <div className="leading-tight">
           <div className="text-[14px] font-bold">Acme Customer Care</div>
           <div className="text-[11px]" style={{color:'var(--chrome-muted)'}}>
-            {desk?<span className="mono">Amazon Connect · {agent?agent.instance:'—'}</span>:'Growth Engine · working prototype'}
+            {desk?<span className="mono">Amazon Connect · {agent?agent.instance:'—'}</span>:page==='training'?'Training mode · a mock call, you are the agent':'Growth Engine · working prototype'}
           </div>
         </div>
       </div>
@@ -562,7 +564,7 @@ function SideNav({page,setPage,collapsed,leads}){
 }
 
 // ─── CONTACT CONTROL PANEL (the softphone) ───
-function CCP({agentState,contact,scenario,seconds,onAccept,onReject,onEnd,onClose,muted,setMuted,held,setHeld,acwSeconds}){
+function CCP({agentState,contact,scenario,seconds,onAccept,onReject,onEnd,onClose,muted,setMuted,held,setHeld,acwSeconds,ringNote}){
   const st=AGENT_STATES[agentState]||AGENT_STATES.offline;
   const idle=agentState==='available';
 
@@ -612,7 +614,7 @@ function CCP({agentState,contact,scenario,seconds,onAccept,onReject,onEnd,onClos
                 style={{background:'var(--surface-3)',color:'var(--text-2)'}}>Reject</button>
             </div>
             <p className="text-[10.5px] t-muted mt-3 text-center leading-relaxed">
-              Auto-answer in a moment, as configured on this routing profile.
+              {ringNote||'Auto-answer in a moment, as configured on this routing profile.'}
             </p>
           </div>
         )}
@@ -913,6 +915,7 @@ function App(){
   const traceTimer=useRef(null);
   const runTraceRef=useRef(null);
   const[aiEnabled,setAiEnabled]=useState(false);
+  const[trainingBusy,setTrainingBusy]=useState(false);   // a practice call is in progress
 
   // Frontier: tabs, live traffic, model, platform
   const[fdTab,setFdTab]=useState('overview');
@@ -1458,7 +1461,7 @@ function App(){
 
   const storyRunning=storyIdx>=0;
   // On a live contact the menu folds away: the agent's desktop needs the width.
-  const onContact=page==='workspace'&&agentState!=='available';
+  const onContact=(page==='workspace'&&agentState!=='available')||(page==='training'&&trainingBusy);
   const navCollapsed=navClosed||onContact;
   return(
     <div className="flex flex-col"
@@ -1512,6 +1515,7 @@ function App(){
                   audioOn={audioOn} setAudioOn={(v)=>{if(!v)stopSpeaking();setAudioOn(v);}}/>
           )}
           {page==='pipeline'&&<div className="flex-1 overflow-y-auto p-5"><PipelinePage leads={leads} refreshLeads={refreshLeads}/></div>}
+          {page==='training'&&<TrainingPage workspace={workspace} aiEnabled={aiEnabled} onBusy={setTrainingBusy}/>}
           {page==='analytics'&&<div className="flex-1 overflow-y-auto p-5"><AnalyticsPage analytics={analytics} leads={leads} voc={voc}/></div>}
           {page==='executive'&&<div className="flex-1 overflow-y-auto p-5"><ExecutivePage exec={execData}/></div>}
           {page==='frontdoor'&&<div className="flex-1 overflow-y-auto p-5">
@@ -5589,6 +5593,631 @@ function LiveLauncher({options,onStart,onClose,busy}){
               style={{background:COLORS.accent,opacity:busy?0.6:1}}>{busy?'Connecting…':'Start the call'}</button>
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  TRAINING MODE — the agent practises; the engine plays the customer
+//  A mock call in audio. The persona speaks, the trainee answers out loud, and
+//  everything the live workspace does happens behind it. Then a debrief.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const TRAIN_KEY='icx-training';
+const loadAttempts=()=>{try{return JSON.parse(localStorage.getItem(TRAIN_KEY)||'[]');}catch(e){return [];}};
+const saveAttempt=(a)=>{try{localStorage.setItem(TRAIN_KEY,JSON.stringify([a,...loadAttempts()].slice(0,60)));}catch(e){}};
+const MOOD_TONE=(m)=>m<0.3?'red':m<0.45?'amber':m<0.6?'neutral':'green';
+const DIFF_TONE={steady:'green',testing:'amber',tough:'red'};
+
+// A ring tone from an oscillator — the UK double ring. Nothing is downloaded.
+function makeRinger(){
+  let ac=null,timer=null;
+  const tone=(at,dur)=>{
+    const g=ac.createGain();
+    g.gain.setValueAtTime(0.0001,at);g.gain.exponentialRampToValueAtTime(0.16,at+0.02);g.gain.exponentialRampToValueAtTime(0.0001,at+dur);
+    g.connect(ac.destination);
+    [400,450].forEach(f=>{const o=ac.createOscillator();o.type='sine';o.frequency.value=f;o.connect(g);o.start(at);o.stop(at+dur+0.05);});
+  };
+  const cycle=()=>{if(!ac)return;const t=ac.currentTime+0.05;tone(t,0.4);tone(t+0.6,0.4);timer=setTimeout(cycle,3000);};
+  return{
+    start(){try{ac=new (window.AudioContext||window.webkitAudioContext)();cycle();}catch(e){ac=null;}},
+    stop(){clearTimeout(timer);try{if(ac)ac.close();}catch(e){}ac=null;},
+  };
+}
+
+function TrainingPage({workspace,aiEnabled,onBusy}){
+  const[options,setOptions]=useState(null);
+  const[who,setWho]=useState(null);
+  const[diff,setDiff]=useState('steady');
+  const[phase,setPhase]=useState('pick');          // pick | ringing | connected | debrief
+  const[session,setSession]=useState(null);
+  const[messages,setMessages]=useState([]);
+  const[analysis,setAnalysis]=useState(null);
+  const[objectives,setObjectives]=useState([]);
+  const[persona,setPersona]=useState(null);
+  const[seconds,setSeconds]=useState(0);
+  const[acw,setAcw]=useState(0);
+  const[muted,setMuted]=useState(false);
+  const[held,setHeld]=useState(false);
+  const[speaking,setSpeaking]=useState(false);
+  const[listening,setListening]=useState(false);
+  const[interim,setInterim]=useState('');
+  const[handsFree,setHandsFree]=useState(true);
+  const[text,setText]=useState('');
+  const[busy,setBusy]=useState(false);
+  const[hintOpen,setHintOpen]=useState(false);
+  const[hints,setHints]=useState(0);
+  const[debrief,setDebrief]=useState(null);
+  const[attempts,setAttempts]=useState(loadAttempts);
+  const[profile,setProfile]=useState(null);
+  const[leftTab,setLeftTab]=useState('transcript');
+  const[micNote,setMicNote]=useState('');
+  const rec=useRef(null), ring=useRef(makeRinger()), runId=useRef(0), chatRef=useRef(null);
+  const sessionRef=useRef(null), phaseRef=useRef('pick'), handsFreeRef=useRef(true), mutedRef=useRef(false);
+  const speakingRef=useRef(false), restarts=useRef(0), secondsRef=useRef(0), hintsRef=useRef(0);
+  phaseRef.current=phase;handsFreeRef.current=handsFree;mutedRef.current=muted;speakingRef.current=speaking;secondsRef.current=seconds;hintsRef.current=hints;
+  const Speech=speechInput();
+
+  useEffect(()=>{fetch(API+'/training/options').then(r=>r.json()).then(setOptions).catch(()=>{});},[]);
+  useEffect(()=>{if(phase!=='connected')return;const t=setInterval(()=>setSeconds(s=>s+1),1000);return()=>clearInterval(t);},[phase]);
+  useEffect(()=>{if(phase!=='debrief')return;const t=setInterval(()=>setAcw(s=>s+1),1000);return()=>clearInterval(t);},[phase]);
+  useEffect(()=>()=>{stopListening();stopSpeaking();ring.current.stop();runId.current++;},[]);
+  useEffect(()=>{onBusy&&onBusy(phase!=='pick');},[phase]);
+  useEffect(()=>{if(muted)stopListening();else if(phase==='connected'&&handsFree&&!speakingRef.current&&!busy)startListening();},[muted]);
+  const scrollChat=()=>setTimeout(()=>{if(chatRef.current)chatRef.current.scrollTop=chatRef.current.scrollHeight;},80);
+
+  // ── speaking and listening
+  const stopListening=()=>{try{if(rec.current){rec.current.onend=null;rec.current.abort();}}catch(e){}rec.current=null;setListening(false);setInterim('');};
+  const startListening=()=>{
+    if(!Speech||mutedRef.current||phaseRef.current!=='connected'||speakingRef.current)return;
+    stopListening();
+    try{
+      const r=new Speech();
+      r.lang='en-GB';r.interimResults=true;r.continuous=false;r.maxAlternatives=1;
+      let finalText='';
+      r.onresult=(e)=>{
+        let s='';
+        for(let i=0;i<e.results.length;i++){s+=e.results[i][0].transcript;if(e.results[i].isFinal)finalText=s;}
+        setInterim(s);
+      };
+      r.onerror=(e)=>{
+        if(e.error==='not-allowed'||e.error==='audio-capture'||e.error==='service-not-allowed'){
+          setMicNote(e.error==='not-allowed'?'Microphone access was refused. You can type instead.':'No microphone was found. You can type instead.');
+          setHandsFree(false);
+        }
+      };
+      r.onend=()=>{
+        rec.current=null;setListening(false);setInterim('');
+        const said=finalText.trim();
+        if(said){restarts.current=0;send(said);return;}
+        // Silence. Keep listening hands-free, but not forever.
+        if(handsFreeRef.current&&phaseRef.current==='connected'&&!speakingRef.current&&!mutedRef.current&&restarts.current<12){
+          restarts.current++;setTimeout(startListening,350);
+        }else if(restarts.current>=12){setMicNote('Nothing heard for a while. Press the microphone, or type.');}
+      };
+      rec.current=r;setListening(true);setMicNote('');r.start();
+    }catch(e){setListening(false);}
+  };
+  const customerSays=async(line,mood,ended)=>{
+    const run=runId.current;
+    setMessages(prev=>[...prev,{role:'customer',text:line,delay:secondsRef.current}]);scrollChat();
+    stopListening();setSpeaking(true);speakingRef.current=true;
+    if(canSpeak()){await say(line,'en-GB','customer',mood<0.3?1.1:mood<0.45?1.04:1.0);}
+    else{await new Promise(r=>setTimeout(r,Math.min(4000,800+line.length*28)));}
+    if(run!==runId.current)return;
+    setSpeaking(false);speakingRef.current=false;
+    if(ended){setTimeout(()=>{if(run===runId.current)finish('customer');},1400);return;}
+    if(handsFreeRef.current)startListening();
+  };
+
+  // ── the call
+  const begin=async()=>{
+    if(!who)return;
+    setBusy(true);
+    try{
+      const res=await fetch(API+'/training/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({persona:who,difficulty:diff})});
+      const s=await res.json();
+      runId.current++;
+      sessionRef.current=s;setSession(s);
+      setMessages([]);setAnalysis(s.analysis);setObjectives(s.objectives);setPersona(s.persona);
+      setSeconds(0);setAcw(0);setMuted(false);setHeld(false);setHints(0);setHintOpen(false);setDebrief(null);setText('');setMicNote('');
+      restarts.current=0;setLeftTab('transcript');
+      fetch(API+'/profiles/'+s.profile_id).then(r=>r.ok?r.json():null).then(setProfile).catch(()=>{});
+      setPhase('ringing');
+      ring.current.start();
+    }catch(e){}
+    setBusy(false);
+  };
+  const accept=()=>{
+    ring.current.stop();
+    setPhase('connected');phaseRef.current='connected';
+    const s=sessionRef.current;
+    setTimeout(()=>customerSays(s.opening.text,s.opening.mood,false),700);
+  };
+  const reject=()=>{ring.current.stop();runId.current++;setPhase('pick');sessionRef.current=null;setSession(null);};
+  const send=async(t)=>{
+    const s=sessionRef.current, v=(t||'').trim();
+    if(!s||!v||phaseRef.current!=='connected')return;
+    stopListening();
+    setMessages(prev=>[...prev,{role:'agent',text:v,delay:secondsRef.current}]);scrollChat();
+    setText('');setBusy(true);
+    try{
+      const res=await fetch(API+'/training/turn',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:s.id,text:v})});
+      if(res.ok){
+        const d=await res.json();
+        setAnalysis(d.analysis);setObjectives(d.objectives);setPersona(d.persona);
+        setBusy(false);
+        // A beat before the customer answers, as a person would take.
+        await new Promise(r=>setTimeout(r,500));
+        customerSays(d.customer.text,d.customer.mood,d.ended);
+        return;
+      }
+    }catch(e){}
+    setBusy(false);
+    if(handsFreeRef.current)startListening();
+  };
+  const finish=async(by)=>{
+    const s=sessionRef.current;
+    if(!s||phaseRef.current==='debrief')return;
+    runId.current++;stopListening();stopSpeaking();ring.current.stop();
+    setSpeaking(false);speakingRef.current=false;
+    setPhase('debrief');phaseRef.current='debrief';
+    try{
+      const res=await fetch(API+'/training/end',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:s.id,hints_used:hintsRef.current,ended_by:by})});
+      const d=await res.json();
+      setDebrief(d);
+      const a={id:who,name:s.customer.name,difficulty:s.difficulty.id,score:d.quality.overall,band:d.quality.band,
+        compliance:d.quality.compliance,done:d.done,total:d.objectives.length,at:Date.now()};
+      saveAttempt(a);setAttempts(loadAttempts());
+    }catch(e){}
+  };
+  const closeOut=()=>{runId.current++;setPhase('pick');sessionRef.current=null;setSession(null);setDebrief(null);};
+  const again=(harder)=>{
+    if(harder){const order=['steady','testing','tough'];const i=order.indexOf(diff);setDiff(order[Math.min(2,i+1)]);}
+    closeOut();setTimeout(begin,80);
+  };
+  const toggleMic=()=>{if(listening)stopListening();else startListening();};
+  const openHint=()=>{if(!hintOpen)setHints(h=>h+1);setHintOpen(o=>!o);};
+
+  if(phase==='pick'){
+    return(
+      <div className="flex-1 overflow-y-auto p-5">
+        <TrainingPick options={options} who={who} setWho={setWho} diff={diff} setDiff={setDiff} onStart={begin}
+          busy={busy} attempts={attempts} speech={!!Speech} voice={canSpeak()} handsFree={handsFree} setHandsFree={setHandsFree} aiEnabled={aiEnabled}/>
+      </div>
+    );
+  }
+
+  const s=session;
+  const contact=s?s.contact:null;
+  const agentState=phase==='ringing'?'ringing':phase==='connected'?'connected':'acw';
+  const mood=persona?persona.mood:(s?s.opening.mood:0.5);
+  const moodLabel=persona?persona.mood_label:(s?s.opening.mood_label:'neutral');
+  const routed=analysis?analysis.routed_to_engine:false;
+  const leadScore=analysis?analysis.lead_score:0;
+  const scoreTone=leadScore>=80?'green':leadScore>=50?'amber':'blue';
+
+  return(
+    <div className="flex-1 flex min-h-0">
+      <CCP agentState={agentState} contact={contact} scenario={s} seconds={seconds} acwSeconds={acw}
+        onAccept={accept} onReject={reject} onEnd={()=>finish('agent')} onClose={closeOut}
+        muted={muted} setMuted={setMuted} held={held} setHeld={setHeld}
+        ringNote="Press Accept when you are ready. The customer speaks first."/>
+      <main className="flex-1 min-w-0 min-h-0 overflow-hidden flex flex-col p-3.5 fade-in">
+        {/* Header: who, what the engine decided, how they feel, and the training controls */}
+        <div className="card px-4 py-2.5 mb-2.5 flex items-center gap-4 flex-wrap shrink-0">
+          <div className="flex items-center gap-2.5 pr-4" style={{borderRight:'1px solid var(--border)'}}>
+            <div className="w-9 h-9 rounded-full flex items-center justify-center" style={{background:SOFT.purple,color:COLORS.purple}}><Icon name="headset" size={17}/></div>
+            <div className="leading-tight">
+              <div className="text-[14px] font-bold t-primary">{s.customer.name}</div>
+              <div className="text-[11px] t-muted">{s.customer.role}</div>
+            </div>
+          </div>
+          {[['Plan',s.customer.tier],['Value',s.customer.account_value],['Tenure',s.customer.tenure]].map(([l,v])=>(
+            <div key={l} className="leading-tight"><div className="text-[10px] t-muted uppercase tracking-wide font-bold">{l}</div><div className="text-[12.5px] font-semibold t-primary">{v}</div></div>
+          ))}
+          <div className="pl-4 leading-tight" style={{borderLeft:'1px solid var(--border)'}}>
+            <div className="text-[10px] t-muted uppercase tracking-wide font-bold">The engine decided</div>
+            <div className="flex items-center gap-1.5 mt-0.5">
+              <span className="text-[11px] font-bold" style={{color:c(s.treatment.segment_detail.tone)}}>{s.treatment.segment_detail.name}</span>
+              <span className="text-[10px] font-bold uppercase px-1 rounded" style={{background:s.treatment.decision==='sell'?SOFT.green:'var(--surface-3)',color:s.treatment.decision==='sell'?COLORS.green:'var(--text-3)'}}>{s.treatment.decision}</span>
+              <span className="text-[10.5px] t-muted">{likely(s.treatment.propensity)} likely</span>
+            </div>
+          </div>
+          <div className="pl-4 leading-tight min-w-[150px]" style={{borderLeft:'1px solid var(--border)'}}>
+            <div className="text-[10px] t-muted uppercase tracking-wide font-bold">How they feel</div>
+            <div className="flex items-center gap-2 mt-1">
+              <div className="h-1.5 w-20 rounded-full overflow-hidden" style={{background:'var(--surface-3)'}}>
+                <div className="h-full" style={{width:`${Math.round(mood*100)}%`,background:c(MOOD_TONE(mood)),transition:'width .6s cubic-bezier(.16,1,.3,1),background .4s'}}></div>
+              </div>
+              <span className="text-[11.5px] font-bold capitalize" style={{color:c(MOOD_TONE(mood))}}>{moodLabel}</span>
+            </div>
+          </div>
+          <div className="ml-auto flex items-center gap-2">
+            <Pill tone={DIFF_TONE[s.difficulty.id]||'neutral'} dot>Practice · {s.difficulty.label}</Pill>
+            {speaking&&<span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10.5px] font-bold uppercase tracking-wider" style={{background:SOFT.accent,color:COLORS.accent}}><Icon name="volume" size={12}/>Customer speaking</span>}
+            {listening&&<span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10.5px] font-bold uppercase tracking-wider" style={{background:SOFT.red,color:COLORS.red}}><span className="live-dot"></span>Listening</span>}
+            {phase==='connected'&&Speech&&(
+              <button onClick={()=>{setHandsFree(v=>{const n=!v;if(!n)stopListening();else if(!speakingRef.current&&!busy)setTimeout(startListening,50);return n;});}}
+                title="Hands-free: the microphone opens by itself after the customer speaks" className="text-[12px] font-semibold px-2.5 py-1.5 rounded"
+                style={{background:handsFree?SOFT.accent:'var(--surface-3)',color:handsFree?COLORS.accent:'var(--text-2)'}}>
+                <span className="inline-flex items-center gap-1.5"><Icon name="mic" size={13}/>{handsFree?'Hands-free on':'Hands-free off'}</span>
+              </button>
+            )}
+            {phase==='connected'&&(
+              <button onClick={openHint} className="text-[12px] font-semibold px-2.5 py-1.5 rounded"
+                style={{background:hintOpen?SOFT.amber:'var(--surface-3)',color:hintOpen?COLORS.amber:'var(--text-2)'}}>
+                <span className="inline-flex items-center gap-1.5"><Icon name="bulb" size={13}/>{hintOpen?'Hide hint':'Hint'}{hints>0&&<span className="mono text-[10px]">·{hints}</span>}</span>
+              </button>
+            )}
+          </div>
+        </div>
+
+        {phase==='ringing'&&(
+          <div className="flex-1 flex items-center justify-center p-6">
+            <div className="text-center max-w-md">
+              <div className="mb-4 shake flex justify-center" style={{color:COLORS.accent}}><Icon name="phone" size={46} stroke={1.6}/></div>
+              <h2 className="text-[24px] font-extrabold t-primary mb-1">Incoming call</h2>
+              <p className="text-[14.5px] t-secondary mb-5">Read the screen pop, then press <b>Accept</b> on the softphone. The customer will speak first — answer them out loud.</p>
+              <div className="card p-5 text-left">
+                <div className="flex items-center justify-between mb-3 pb-3 border-b divider">
+                  <div><div className="text-[15px] font-bold t-primary">{s.customer.name}</div><div className="text-[12px] t-muted">{s.customer.role}</div></div>
+                  <Pill tone={contact.attributes&&contact.attributes.authStatus==='VERIFIED'?'accent':'amber'} dot>{contact.attributes&&contact.attributes.authStatus==='VERIFIED'?'Verified':'Verify first'}</Pill>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  {[['Queue',contact.queue],['Reason given',s.title.replace('Practice — ','')],['IVR path',contact.ivr_path],['Mood on arrival',s.opening.mood_label]].map(([l,v])=>(
+                    <div key={l}><div className="text-[10px] t-muted uppercase tracking-wide font-bold mb-0.5">{l}</div><div className="text-[11.5px] t-secondary break-words capitalize">{v}</div></div>
+                  ))}
+                </div>
+                <div className="mt-3 pt-3 border-t divider text-[12px] t-secondary"><b className="t-primary">Your focus: </b>{s.focus}</div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {phase==='connected'&&(
+          <div className="flex-1 grid grid-cols-12 gap-2.5 min-h-0">
+            <section className="col-span-4 card flex flex-col overflow-hidden">
+              <div className="panel-head" style={{padding:'0 .5rem'}}>
+                {[['transcript','The conversation'],['profile','What we know about them']].map(([k,l])=>(
+                  <button key={k} onClick={()=>setLeftTab(k)} className="panel-title px-2.5 py-2.5"
+                    style={{color:leftTab===k?COLORS.accent:'var(--text-3)',borderBottom:`2px solid ${leftTab===k?COLORS.accent:'transparent'}`,marginBottom:-1}}>{l}</button>
+                ))}
+                <span className="mono text-[10.5px] t-muted ml-auto pr-1.5">{messages.length} turns</span>
+              </div>
+              {leftTab==='transcript'?(
+                <>
+                  <div ref={chatRef} className="flex-1 overflow-y-auto px-3 py-3" style={{background:'var(--surface-2)'}}>
+                    {messages.length===0&&<EmptyState icon="phone" title="Connecting…" body="The customer is about to speak." compact/>}
+                    {messages.map((m,i)=><Utterance key={i} msg={m} idx={i} sentiment={analysis&&analysis.sentiments?analysis.sentiments[Math.min(i,analysis.sentiments.length-1)]:mood}/>)}
+                    {busy&&<TypingRow who="customer"/>}
+                  </div>
+                  <TrainingComposer text={text} setText={setText} onSend={send} listening={listening} interim={interim} speaking={speaking}
+                    busy={busy} handsFree={handsFree} speech={!!Speech} onMic={toggleMic} note={micNote}/>
+                </>
+              ):<ProfilePanel profile={profile}/>}
+            </section>
+
+            <section className="col-span-5 flex flex-col gap-2.5 min-h-0">
+              <div className="grid grid-cols-2 gap-2.5">
+                <ScoreCard title="Sales opportunity" value={leadScore} tone={scoreTone}
+                  status={!routed?'Not a selling call':leadScore>=80?'Strong — a real lead':leadScore>=50?'Building':'Listening'} threshold={80} thresholdLabel="a lead at" sheen={leadScore>=50&&leadScore<80}/>
+                <ScoreCard title="Customer mood" value={Math.round(mood*100)} tone={MOOD_TONE(mood)==='neutral'?'amber':MOOD_TONE(mood)}
+                  status={moodLabel.charAt(0).toUpperCase()+moodLabel.slice(1)} threshold={50} thresholdLabel="neutral at"/>
+              </div>
+              <div className="card flex flex-col overflow-hidden" style={{flex:'1 1 0'}}>
+                <div className="panel-head"><span className="panel-title">Your call so far</span>
+                  <span className="ml-auto text-[10.5px] t-muted">{objectives.filter(o=>o.done).length} of {objectives.length}</span></div>
+                <div className="flex-1 overflow-y-auto px-3 py-2">
+                  {objectives.map(o=>(
+                    <div key={o.id} className="flex items-start gap-2 py-1.5" style={{borderBottom:'1px dashed var(--border)'}}>
+                      <span className="w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0 mt-0.5"
+                        style={{background:o.bad?SOFT.red:o.done?SOFT.green:'var(--surface-3)',color:o.bad?COLORS.red:o.done?COLORS.green:'var(--text-3)'}}>{o.bad?'✕':o.done?'✓':''}</span>
+                      <span className={`text-[12px] leading-snug ${o.done&&!o.bad?'t-muted':'t-primary'}`} style={{textDecoration:o.done&&!o.bad?'line-through':'none',textDecorationColor:'var(--border-strong)'}}>{o.label}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="card flex flex-col overflow-hidden" style={{flex:'1 1 0'}}>
+                <div className="panel-head"><span className="panel-title">Buying signals the AI heard</span>
+                  <span className="w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-bold ml-auto" style={{background:SOFT.accent,color:COLORS.accent}}>{analysis?analysis.signals.length:0}</span></div>
+                <div className="flex-1 overflow-y-auto px-3 py-3">
+                  {!analysis||analysis.signals.length===0
+                    ?(analysis&&!routed
+                      ?<EmptyState icon="shield" title="Not listening for a sale" body="This call is service only. The engine stays out of the way." compact/>
+                      :<EmptyState icon="search" title="Listening for buying signals" body="Anything the customer says that points to a sale appears here." compact/>)
+                    :analysis.signals.map((sg,i)=><SignalBadge key={i} signal={sg} index={i}/>)}
+                </div>
+              </div>
+            </section>
+
+            <section className="col-span-3 flex flex-col gap-2.5 min-h-0 overflow-y-auto">
+              <TriageCard triage={analysis?analysis.triage:null}/>
+              <div className="card">
+                <div className="panel-head"><span className="panel-title">What to say next</span>
+                  {!hintOpen&&<span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded ml-auto" style={{background:'var(--surface-3)',color:'var(--text-3)'}}>hidden</span>}</div>
+                <div className="p-3">
+                  {hintOpen?(
+                    <>
+                      {analysis&&analysis.coaching?<CoachingCard coaching={analysis.coaching}/>:<EmptyState icon="bulb" title="Nothing to suggest yet" compact/>}
+                      {analysis&&analysis.suggested_replies&&analysis.suggested_replies.length>0&&(
+                        <div className="mt-2.5">
+                          <div className="text-[10px] t-muted uppercase tracking-wide font-bold mb-1">You could say</div>
+                          {analysis.suggested_replies.map((r,i)=>(
+                            <button key={i} onClick={()=>send(r)} disabled={busy||speaking}
+                              className="w-full text-left text-[11.5px] leading-snug px-2 py-1.5 rounded mb-1" style={{background:SOFT.accent,color:'#0b4ea8',border:'1px solid #cfe0fb'}}>{r}</button>
+                          ))}
+                        </div>
+                      )}
+                      <p className="text-[10.5px] t-muted mt-2">In the real workspace this is always on. Here it is hidden so you practise without it; each look is counted.</p>
+                    </>
+                  ):(
+                    <EmptyState icon="bulb" title="Try it without help first" body="Press Hint when you are stuck. The debrief will say how many you used." compact/>
+                  )}
+                </div>
+              </div>
+              {analysis&&analysis.lead_summary&&<LeadCard summary={analysis.lead_summary}/>}
+              {analysis&&analysis.resolution_summary&&messages.length>2&&<ResolutionCard resolution={analysis.resolution_summary}/>}
+            </section>
+          </div>
+        )}
+
+        {phase==='debrief'&&(
+          <TrainingDebrief d={debrief} s={s} messages={messages} onAgain={()=>again(false)} onHarder={()=>again(true)} onPick={closeOut} canHarder={diff!=='tough'}/>
+        )}
+      </main>
+    </div>
+  );
+}
+
+// ─── What the trainee says: spoken, or typed ───
+function TrainingComposer({text,setText,onSend,listening,interim,speaking,busy,handsFree,speech,onMic,note}){
+  const status=speaking?'The customer is speaking — wait for them to finish.'
+    :busy?'Thinking about what you said…'
+    :listening?(interim?`Hearing: “${interim}”`:'Listening… speak now.')
+    :handsFree&&speech?'Your turn. The microphone opens by itself.'
+    :speech?'Press the microphone to speak, or type.':'Type what you would say.';
+  return(
+    <div className="shrink-0 p-2.5" style={{borderTop:'1px solid var(--border)',background:'var(--surface)'}}>
+      <div className="flex items-center gap-2 mb-1.5 text-[11px]" style={{color:listening?COLORS.red:'var(--text-3)'}}>
+        {listening&&<span className="live-dot"></span>}
+        <span className="truncate">{status}</span>
+      </div>
+      {note&&<div className="text-[11px] mb-1.5 px-2 py-1 rounded" style={{background:SOFT.amber,color:COLORS.amber}}>{note}</div>}
+      <div className="flex items-end gap-1.5">
+        <textarea value={text} onChange={e=>setText(e.target.value)} rows={2} disabled={speaking}
+          onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();onSend(text);}}}
+          placeholder="What you say to the customer"
+          className="flex-1 text-[13px] leading-snug px-2.5 py-2 rounded-md resize-none"
+          style={{border:'1px solid var(--border-strong)',background:'var(--surface-2)',color:'var(--text)',fontFamily:'inherit',outline:'none',opacity:speaking?0.6:1}}/>
+        {speech&&(
+          <button onClick={onMic} disabled={speaking} title="Push to talk" aria-label={listening?'Stop listening':'Speak'}
+            className={`w-9 h-9 rounded-md text-[14px] shrink-0 ${listening?'ring-pulse':''}`}
+            style={{background:listening?SOFT.red:'var(--surface-3)',color:listening?COLORS.red:'var(--text-2)'}}>
+            {listening?'■':<Icon name="mic" size={16}/>}
+          </button>
+        )}
+        <button onClick={()=>onSend(text)} disabled={!text.trim()||speaking||busy}
+          className="h-9 px-3.5 rounded-md text-[13px] font-bold text-white shrink-0" style={{background:COLORS.accent,opacity:text.trim()&&!speaking&&!busy?1:0.45}}>Say it</button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Choosing a customer ───
+function TrainingPick({options,who,setWho,diff,setDiff,onStart,busy,attempts,speech,voice,handsFree,setHandsFree,aiEnabled}){
+  const best=(id)=>{const a=attempts.filter(x=>x.id===id);return a.length?Math.max(...a.map(x=>x.score)):null;};
+  const sayHello=()=>{if(canSpeak())say('Hi, thanks for taking my call. My storage keeps telling me it is full.','en-GB','customer',1.0);};
+  return(
+    <div className="max-w-6xl mx-auto">
+      <PageHead kicker="For agents" title="Practice a call"
+        sub="A mock call, in audio. The engine plays the customer; you are the agent. Speak as you would on a real call — the customer answers back, and everything the workspace does happens as you go. Then you get a debrief."
+        tag={<Pill tone="purple" dot>Training mode</Pill>}/>
+
+      <div className="grid grid-cols-3 gap-3 mb-4">
+        {[['1','Pick a customer','Each one teaches one thing: holding back, solving before offering, verifying first.'],
+          ['2','Answer, and speak','The customer speaks first. Reply out loud — the microphone opens by itself — or type.'],
+          ['3','Read the debrief','Quality score with evidence, what the customer felt, and the one thing to work on next.']].map(([n,t,b])=>(
+          <div key={n} className="card p-4 flex gap-3">
+            <div className="w-8 h-8 rounded-full flex items-center justify-center text-[13px] font-extrabold text-white shrink-0" style={{background:COLORS.purple}}>{n}</div>
+            <div><div className="text-[14px] font-bold t-primary">{t}</div><div className="text-[12.5px] t-secondary mt-0.5 leading-snug">{b}</div></div>
+          </div>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-12 gap-3">
+        <div className="col-span-8">
+          <SectionHead title="Who is calling?" sub="Nine customers, each with a different lesson in them."/>
+          {!options?<div className="t-muted text-[13px]">Loading…</div>:(
+            <div className="grid grid-cols-3 gap-2.5">
+              {options.customers.map(p=>{
+                const on=who===p.id, b=best(p.id);
+                return(
+                  <button key={p.id} onClick={()=>setWho(p.id)} className="text-left card p-3.5 transition-all" data-persona={p.id}
+                    style={{border:`2px solid ${on?COLORS.purple:'transparent'}`,background:on?SOFT.purple:'var(--surface)'}}>
+                    <div className="flex items-start justify-between gap-2 mb-1">
+                      <div className="text-[14px] font-bold t-primary leading-tight">{p.name}</div>
+                      <span className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded shrink-0"
+                        style={{background:p.held?SOFT.red:p.decision==='sell'?SOFT.green:'var(--surface-3)',color:p.held?COLORS.red:p.decision==='sell'?COLORS.green:'var(--text-3)'}}>{p.held?'Held back':p.decision}</span>
+                    </div>
+                    <div className="text-[11px] t-muted mb-2">{p.role}</div>
+                    <div className="text-[12px] t-secondary leading-snug mb-2">{p.about}</div>
+                    <div className="text-[11px] font-semibold leading-snug" style={{color:COLORS.purple}}>Practise: {p.focus}</div>
+                    <div className="flex items-center gap-2 mt-2.5 pt-2 border-t divider text-[10.5px] t-muted">
+                      <span className="capitalize">Arrives {p.opening_mood}</span>
+                      <span>·</span><span>{p.turns} things to say</span>
+                      {b!==null&&<span className="ml-auto font-bold" style={{color:b>=75?COLORS.green:COLORS.amber}}>Best {b}</span>}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        <div className="col-span-4 flex flex-col gap-3">
+          <div className="card p-4">
+            <div className="text-[10px] t-muted uppercase tracking-wide font-bold mb-2">How hard</div>
+            <div className="space-y-1.5">
+              {(options?options.difficulties:[]).map(d=>{
+                const on=diff===d.id;
+                return(
+                  <button key={d.id} onClick={()=>setDiff(d.id)} className="w-full text-left rounded-md px-3 py-2.5 transition-colors"
+                    style={{background:on?cs(DIFF_TONE[d.id]):'var(--surface-2)',border:`1px solid ${on?c(DIFF_TONE[d.id]):'var(--border)'}`}}>
+                    <div className="text-[13px] font-bold" style={{color:on?c(DIFF_TONE[d.id]):'var(--text)'}}>{d.label}</div>
+                    <div className="text-[11.5px] t-secondary leading-snug mt-0.5">{d.blurb}</div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="card p-4">
+            <div className="text-[10px] t-muted uppercase tracking-wide font-bold mb-2">Sound check</div>
+            <div className="space-y-1.5 text-[12.5px]">
+              <div className="flex items-center gap-2"><span className="w-2 h-2 rounded-full" style={{background:voice?COLORS.green:COLORS.amber}}></span>
+                <span className="t-secondary">{voice?'The customer will speak through your speakers.':'No speech voices here — the customer\'s words appear as text.'}</span></div>
+              <div className="flex items-center gap-2"><span className="w-2 h-2 rounded-full" style={{background:speech?COLORS.green:COLORS.amber}}></span>
+                <span className="t-secondary">{speech?'Your microphone will be used when you answer.':'This browser cannot listen — you will type your replies.'}</span></div>
+              {aiEnabled&&<div className="flex items-center gap-2"><span className="w-2 h-2 rounded-full" style={{background:COLORS.purple}}></span><span className="t-secondary">Claude voices the customer's replies.</span></div>}
+            </div>
+            <div className="flex items-center gap-2 mt-3">
+              {voice&&<button onClick={sayHello} className="text-[12px] font-semibold px-2.5 py-1.5 rounded" style={{background:SOFT.accent,color:COLORS.accent}}>Hear the customer</button>}
+              {speech&&<button onClick={()=>setHandsFree(v=>!v)} className="text-[12px] font-semibold px-2.5 py-1.5 rounded" style={{background:handsFree?SOFT.accent:'var(--surface-3)',color:handsFree?COLORS.accent:'var(--text-2)'}}>{handsFree?'Hands-free on':'Hands-free off'}</button>}
+            </div>
+            <p className="text-[10.5px] t-muted mt-2.5 leading-snug">The voice is synthesised in the browser. The microphone uses the browser's speech service, which may send audio to the browser vendor. Nothing is recorded here.</p>
+          </div>
+
+          <button onClick={onStart} disabled={!who||busy} className="w-full py-3 rounded-md text-[15px] font-bold text-white"
+            style={{background:COLORS.purple,opacity:!who||busy?0.5:1}}>{busy?'Connecting…':who?'Take the call':'Choose a customer first'}</button>
+
+          {attempts.length>0&&(
+            <div className="card p-4">
+              <div className="text-[10px] t-muted uppercase tracking-wide font-bold mb-2">Your last calls</div>
+              {attempts.slice(0,6).map((a,i)=>(
+                <div key={i} className="flex items-center gap-2 py-1.5 text-[12px]" style={{borderBottom:'1px dashed var(--border)'}}>
+                  <span className="font-semibold t-primary truncate flex-1">{a.name}</span>
+                  <span className="t-muted capitalize">{a.difficulty}</span>
+                  <span className="font-bold" style={{color:a.compliance==='breach'?COLORS.red:a.score>=75?COLORS.green:COLORS.amber}}>{a.score}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── The debrief ───
+function TrainingDebrief({d,s,messages,onAgain,onHarder,onPick,canHarder}){
+  const[showModel,setShowModel]=useState(false);
+  const[showEvidence,setShowEvidence]=useState(false);
+  if(!d)return <div className="flex-1 flex items-center justify-center t-muted text-[13px]">Scoring the call…</div>;
+  const q=d.quality;
+  const tone=q.compliance==='breach'?'red':q.overall>=90?'green':q.overall>=75?'accent':'amber';
+  const moods=d.customer.moods||[];
+  const w=220,h=46;
+  const pts=moods.map((m,i)=>`${(i/Math.max(1,moods.length-1))*w},${h-m*h}`).join(' ');
+  const all=q.sections.reduce((a,x)=>a.concat(x.criteria),[]);
+  return(
+    <div className="flex-1 overflow-y-auto">
+      <div className="grid grid-cols-12 gap-2.5">
+        <section className="col-span-4 card p-4 slide-in-u">
+          <div className="text-[10px] t-muted uppercase tracking-wide font-bold mb-2">How you did</div>
+          <div className="flex items-center gap-4 mb-3 pb-3 border-b divider">
+            <Gauge value={q.overall} size={84} tone={tone} caption="Quality"/>
+            <div>
+              <div className="text-[18px] font-extrabold" style={{color:c(tone)}}>{q.band}</div>
+              <div className="text-[12px] t-secondary mt-0.5">{d.done} of {d.objectives.length} things done · {d.turns} turns · {d.hints_used} hint{d.hints_used===1?'':'s'}</div>
+              <div className="flex items-center gap-3 mt-2 flex-wrap">
+                {[['Service',q.service+'%'],['Sales',q.sales===null?'n/a':q.sales+'%'],['Compliance',q.compliance==='pass'?'Pass':'Breach']].map(([l,v])=>(
+                  <div key={l}><div className="text-[10px] t-muted uppercase tracking-wide font-bold">{l}</div><div className="text-[13px] font-bold" style={{color:v==='Breach'?COLORS.red:'var(--text)'}}>{v}</div></div>
+                ))}
+              </div>
+            </div>
+          </div>
+          <div className="p-2.5 rounded mb-3" style={{background:cs(tone)}}><p className="text-[12px] font-semibold leading-snug" style={{color:c(tone)}}>{q.coaching_note}</p></div>
+          <div className="text-[10px] t-muted uppercase tracking-wide font-bold mb-1.5">Work on next</div>
+          <ol className="space-y-1.5 mb-3">
+            {d.tips.map((t,i)=><li key={i} className="flex gap-2 text-[12.5px] t-primary leading-snug"><span className="font-bold" style={{color:COLORS.purple}}>{i+1}.</span><span>{t}</span></li>)}
+          </ol>
+          <button onClick={()=>setShowEvidence(v=>!v)} className="w-full flex items-center justify-between rounded-md px-3 py-2 text-[12px]" style={{background:'var(--surface-2)',border:'1px solid var(--border)'}}>
+            <span className="font-semibold t-primary">{all.filter(x=>x.pass).length} of {all.length} quality checks met</span>
+            <span className="font-bold" style={{color:COLORS.accent}}>{showEvidence?'Hide':'Show the evidence'}</span>
+          </button>
+          {showEvidence&&q.sections.map(sec=>(
+            <div key={sec.id} className="mt-2 fade-in">
+              <div className="text-[10px] t-muted uppercase tracking-wide font-bold mb-1">{sec.name}{sec.note?<span className="normal-case tracking-normal font-normal"> — {sec.note}</span>:''}</div>
+              {sec.criteria.map((cr,i)=>(
+                <div key={i} className="flex items-start gap-2 py-1" style={{borderBottom:'1px dashed var(--border)'}}>
+                  <span className="w-3.5 h-3.5 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0 mt-0.5" style={{background:cr.pass?SOFT.green:SOFT.red,color:cr.pass?COLORS.green:COLORS.red}}>{cr.pass?'✓':'✕'}</span>
+                  <div className="min-w-0"><div className="text-[11.5px] font-semibold t-primary leading-tight">{cr.name}</div>
+                    {cr.evidence&&<div className="text-[10.5px] t-muted leading-snug mt-0.5">{cr.turn!==null&&cr.turn!==undefined?'“'+cr.evidence+'”':cr.evidence}</div>}</div>
+                </div>
+              ))}
+            </div>
+          ))}
+        </section>
+
+        <section className="col-span-4 flex flex-col gap-2.5">
+          <div className="card p-4 slide-in-u">
+            <div className="text-[10px] t-muted uppercase tracking-wide font-bold mb-2">How the customer felt</div>
+            <div className="flex items-center gap-3">
+              <svg width={w} height={h+6} viewBox={`0 -3 ${w} ${h+6}`} className="shrink-0">
+                <line x1="0" x2={w} y1={h/2} y2={h/2} stroke="var(--border)" strokeDasharray="3 4"/>
+                {moods.length>1&&<polyline points={pts} fill="none" stroke={c(MOOD_TONE(d.customer.mood_end))} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round"/>}
+                {moods.length>0&&<circle cx={w} cy={h-d.customer.mood_end*h} r="4" fill={c(MOOD_TONE(d.customer.mood_end))}/>}
+              </svg>
+              <div className="leading-tight">
+                <div className="text-[13px] font-bold t-primary capitalize">{d.customer.label}</div>
+                <div className="text-[11px] t-muted">started {d.customer.mood_start<0.4?'unhappy':d.customer.mood_start<0.6?'neutral':'happy'}</div>
+              </div>
+            </div>
+            <p className="text-[12.5px] t-secondary mt-2.5 leading-snug">{d.customer.verdict}{d.customer.accepted?' They accepted the offer.':''}</p>
+          </div>
+          <div className="card p-4 slide-in-u">
+            <div className="text-[10px] t-muted uppercase tracking-wide font-bold mb-2">What you were practising</div>
+            <div className="space-y-1.5">
+              {d.objectives.map(o=>(
+                <div key={o.id} className="flex items-start gap-2 text-[12.5px]">
+                  <span className="w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0 mt-0.5" style={{background:o.bad?SOFT.red:o.done?SOFT.green:SOFT.amber,color:o.bad?COLORS.red:o.done?COLORS.green:COLORS.amber}}>{o.bad?'✕':o.done?'✓':'–'}</span>
+                  <div><div className={o.done&&!o.bad?'t-secondary':'t-primary font-semibold'}>{o.label}</div>
+                    {(!o.done||o.bad)&&<div className="text-[11px] t-muted leading-snug mt-0.5">{o.tip}</div>}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="card p-4 slide-in-u">
+            <div className="text-[10px] t-muted uppercase tracking-wide font-bold mb-1.5">What the engine had decided</div>
+            <div className="text-[12.5px] t-secondary leading-snug">
+              <b className="t-primary">{d.engine.segment} · {d.engine.decision.toUpperCase()}</b> · {likely(d.engine.propensity)} likely to buy.
+              {d.engine.override?' '+d.engine.override:d.engine.offer?' The fit it found: '+d.engine.offer:' Nothing to sell here.'}
+            </div>
+          </div>
+        </section>
+
+        <section className="col-span-4 flex flex-col gap-2.5">
+          <div className="card p-4 slide-in-u">
+            <div className="text-[10px] t-muted uppercase tracking-wide font-bold mb-2">What next</div>
+            <div className="grid gap-2">
+              <button onClick={onAgain} className="py-2.5 rounded-md text-[13px] font-bold text-white" style={{background:COLORS.purple}}>Try the same call again</button>
+              {canHarder&&<button onClick={onHarder} className="py-2.5 rounded-md text-[13px] font-bold" style={{background:SOFT.purple,color:COLORS.purple}}>Make it harder</button>}
+              <button onClick={onPick} className="py-2.5 rounded-md text-[13px] font-semibold" style={{background:'var(--surface-3)',color:'var(--text-2)'}}>Choose another customer</button>
+            </div>
+          </div>
+          <div className="card flex flex-col overflow-hidden slide-in-u" style={{maxHeight:420}}>
+            <div className="panel-head" style={{padding:'0 .5rem'}}>
+              <button onClick={()=>setShowModel(false)} className="panel-title px-2.5 py-2.5" style={{color:!showModel?COLORS.accent:'var(--text-3)',borderBottom:`2px solid ${!showModel?COLORS.accent:'transparent'}`,marginBottom:-1}}>Your call</button>
+              <button onClick={()=>setShowModel(true)} className="panel-title px-2.5 py-2.5" style={{color:showModel?COLORS.accent:'var(--text-3)',borderBottom:`2px solid ${showModel?COLORS.accent:'transparent'}`,marginBottom:-1}}>One good way to handle it</button>
+            </div>
+            <div className="flex-1 overflow-y-auto px-3 py-3" style={{background:'var(--surface-2)'}}>
+              {(showModel?d.model_answer:messages).map((m,i)=><Utterance key={i} msg={m} idx={i} sentiment={0.5}/>)}
+              {showModel&&<p className="text-[10.5px] t-muted leading-snug">This is the scripted version of the same call — one good way, not the only one.</p>}
+            </div>
+          </div>
+        </section>
       </div>
     </div>
   );
