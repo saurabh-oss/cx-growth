@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Growth Engine — a contact centre that knows when to sell, and when not to</title>
-<meta name="description" content="A working, open-source prototype that decides on every contact whether to solve or to sell. Try the decision engine in your browser.">
+<meta name="description" content="A working, open-source prototype that decides on every contact whether to solve or to sell — and a training mode where agents practise on a customer the engine plays. Try it in your browser.">
 <meta property="og:title" content="Growth Engine — from cost centre to growth centre">
 <meta property="og:description" content="Every contact is decided before it reaches an agent: scored, segmented, and held back where it should be. Try the engine in your browser.">
 <meta property="og:type" content="website">
@@ -37,6 +37,7 @@ document.documentElement.setAttribute("data-theme",t)})();
       <a href="#decide">Try it</a>
       <a href="#funnel">The day</a>
       <a href="#call">A call</a>
+      <a href="#training">Training</a>
       <a href="#learning">Learning</a>
       <a href="#platform">Platform</a>
       <a href="#architecture">Architecture</a>
@@ -276,8 +277,86 @@ document.documentElement.setAttribute("data-theme",t)})();
   </div>
 </section>
 
+<!-- ═══ TRAINING ═══════════════════════════════════════════════════════ -->
+<section class="section" id="training">
+  <div class="wrap">
+    <div class="head reveal">
+      <p class="kicker">For agents</p>
+      <h2>Practise the call before the call</h2>
+      <p class="sub">Training mode turns the engine round. It plays the customer — out loud, in their own voice —
+        and a human agent takes the call. The customer answers back, pushes back and notices silence. At the end,
+        the agent gets the score a live call would get, with the evidence, and one thing to work on.</p>
+    </div>
+
+    <div class="steps">
+      <article class="card step reveal">
+        <div class="step-n n1">1</div>
+        <p class="kicker k-blue">Answer, and talk</p>
+        <h3>It rings. You pick up.</h3>
+        <p>The customer waits for you to speak first, then tells you why they called. You reply out loud; the
+          microphone sends what you said when you pause. Everything the live desktop shows runs behind it.</p>
+      </article>
+      <article class="card step reveal">
+        <div class="step-n n2">2</div>
+        <p class="kicker k-violet">The customer reacts</p>
+        <h3>Like a person would</h3>
+        <p>Ask a question and they answer it. Ask them to hold and they wait. Stall and they get shorter with you.
+          Sell into a complaint and they get angry. Leave them in silence and — on the harder settings — they hang up.</p>
+      </article>
+      <article class="card step reveal">
+        <div class="step-n n3">3</div>
+        <p class="kicker k-green">Read the debrief</p>
+        <h3>Evidence, not opinion</h3>
+        <p>A quality score with the turn and the words that earned each mark, a checklist of what the call needed,
+          how the customer felt from start to finish, and the scripted call to compare against.</p>
+      </article>
+    </div>
+
+    <div class="tryout card reveal">
+      <div class="tryout-bar">
+        <div>
+          <p class="kicker">Try a reply</p>
+          <p class="muted">The customer has just said this. Choose what you would say back — the reaction is the
+            persona engine's own, exported from the application.</p>
+        </div>
+        <div class="tabs" id="tryTabs" role="tablist" aria-label="Customers"></div>
+      </div>
+      <div class="tryout-grid">
+        <div class="tryout-cust" id="tryCust"></div>
+        <div class="tryout-replies" id="tryReplies" role="group" aria-label="Your reply"></div>
+      </div>
+      <div class="tryout-result" id="tryResult" aria-live="polite"></div>
+    </div>
+
+    <div class="train-split">
+      <div class="reveal">
+        <p class="kicker">Nine customers, nine lessons</p>
+        <div class="skills" id="skills"></div>
+      </div>
+      <div class="reveal">
+        <p class="kicker">What the debrief says</p>
+        <div class="debriefs" id="debriefs"></div>
+      </div>
+    </div>
+
+    <div class="head reveal" style="margin-top:56px">
+      <h2 style="font-size:clamp(24px,2.6vw,32px)">Why it builds skill</h2>
+    </div>
+    <div class="why-grid">
+      <article class="card reveal"><h3>Feedback with the evidence</h3><p>The quality agent cites the turn and the words that satisfied each criterion — the same rubric that scores live calls. An agent can argue with an opinion. It is harder to argue with the transcript.</p></article>
+      <article class="card reveal"><h3>Repetition that gets harder</h3><p>The same customer at three settings: cooperative, one hard question before agreeing, two objections and a short fuse. Best scores are kept, so progress is visible.</p></article>
+      <article class="card reveal"><h3>Help that is counted</h3><p>The advice the live desktop shows is hidden behind a Hint button. Use it when stuck — but the debrief says how many times, so the habit of doing without it forms.</p></article>
+      <article class="card reveal"><h3>The habits transfer</h3><p>It is the real agent desktop with the real engine behind it. The signals, the score and the guardrails an agent learns to read here are the ones they will see on a live contact.</p></article>
+      <article class="card reveal"><h3>Restraint is practised, not preached</h3><p>Two of the nine customers must not be sold to. An agent who pitches to them hears the reaction, sees the compliance breach, and learns why the engine held back.</p></article>
+      <article class="card reveal"><h3>Safe to fail</h3><p>No real customer, no supervisor needed, no recording. Every call is scored, where manual quality review covers two or three calls per agent a month.</p></article>
+    </div>
+
+    <div class="train-shots reveal" id="trainShots"></div>
+  </div>
+</section>
+
 <!-- ═══ GUARDRAILS ═════════════════════════════════════════════════════ -->
-<section class="section" id="guardrails">
+<section class="section section-alt" id="guardrails">
   <div class="wrap">
     <div class="head reveal">
       <p class="kicker">Restraint</p>
@@ -291,7 +370,7 @@ document.documentElement.setAttribute("data-theme",t)})();
 </section>
 
 <!-- ═══ LEARNING ═══════════════════════════════════════════════════════ -->
-<section class="section section-alt" id="learning">
+<section class="section" id="learning">
   <div class="wrap">
     <div class="head reveal">
       <p class="kicker">The feedback loop</p>
@@ -317,7 +396,7 @@ document.documentElement.setAttribute("data-theme",t)})();
 </section>
 
 <!-- ═══ PLATFORM ═══════════════════════════════════════════════════════ -->
-<section class="section" id="platform">
+<section class="section section-alt" id="platform">
   <div class="wrap">
     <div class="head reveal">
       <p class="kicker">Under the hood</p>
@@ -356,7 +435,7 @@ document.documentElement.setAttribute("data-theme",t)})();
 </section>
 
 <!-- ═══ ARCHITECTURE ═══════════════════════════════════════════════════ -->
-<section class="section section-alt" id="architecture">
+<section class="section" id="architecture">
   <div class="wrap">
     <div class="head reveal">
       <p class="kicker">The fit</p>
@@ -384,7 +463,7 @@ document.documentElement.setAttribute("data-theme",t)})();
 </section>
 
 <!-- ═══ AGENTS ═════════════════════════════════════════════════════════ -->
-<section class="section" id="agents">
+<section class="section section-alt" id="agents">
   <div class="wrap">
     <div class="head reveal">
       <p class="kicker">Coverage</p>
@@ -396,7 +475,7 @@ document.documentElement.setAttribute("data-theme",t)})();
 </section>
 
 <!-- ═══ HONEST ═════════════════════════════════════════════════════════ -->
-<section class="section section-alt" id="honest">
+<section class="section" id="honest">
   <div class="wrap">
     <div class="head reveal">
       <p class="kicker">Read this first</p>
@@ -410,7 +489,7 @@ document.documentElement.setAttribute("data-theme",t)})();
 </section>
 
 <!-- ═══ SCREENS ════════════════════════════════════════════════════════ -->
-<section class="section" id="screens">
+<section class="section section-alt" id="screens">
   <div class="wrap">
     <div class="head reveal">
       <p class="kicker">The application</p>
@@ -423,7 +502,7 @@ document.documentElement.setAttribute("data-theme",t)})();
 </section>
 
 <!-- ═══ START ══════════════════════════════════════════════════════════ -->
-<section class="section section-alt" id="start">
+<section class="section" id="start">
   <div class="wrap">
     <div class="head reveal">
       <p class="kicker">Run it</p>

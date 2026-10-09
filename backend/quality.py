@@ -51,8 +51,9 @@ def _quote(text, m, span=58):
     return ("…" if a > 0 else "") + s + ("…" if b < len(text) else "")
 
 
-def _c(name, ok, weight, turn, evidence, why):
-    return {"name": name, "pass": bool(ok), "weight": weight, "turn": turn, "evidence": evidence, "why": why}
+def _c(name, ok, weight, turn, evidence, why, fail=None):
+    return {"name": name, "pass": bool(ok), "weight": weight, "turn": turn, "evidence": evidence, "why": why,
+            "fail": fail or name.lower()}
 
 
 def _pct(items):
@@ -115,15 +116,17 @@ def score(conversation, treatment, sentiments=None, lead_captured=False, auth="V
     compliance = [
         _c("Identity verified before account changes", auth == "VERIFIED" or vi is not None, 1, vi,
            ve or ("Verified in the IVR" if auth == "VERIFIED" else "Challenge failed and no agent verification found"),
-           "Plan, billing and email changes need a verified identity."),
+           "Plan, billing and email changes need a verified identity.",
+           fail="the account was changed without verifying who was calling"),
     ]
     if not sell:
         compliance.append(_c(
             "No offer on a contact treated SOLVE" if not suppressed else "Commercial hold respected",
             oi is None, 3, oi, oe or "No offer language anywhere in the transcript",
-            "The Frontier decided this contact was not a selling opportunity. The agent honoured it."))
+            "The Frontier decided this contact was not a selling opportunity. The agent honoured it.",
+            fail="an offer was made on a contact the engine had held back"))
     compliance.append(_c("No pressure language", pi is None, 1, pi, pe or "None found in the transcript",
-                         "Applies to every contact, sold to or not."))
+                         "Applies to every contact, sold to or not.", fail="pressure language was used"))
 
     s_service, s_sales = _pct(service), (_pct(sales) if sales else None)
     breach = [c for c in compliance if not c["pass"]]
@@ -132,7 +135,7 @@ def score(conversation, treatment, sentiments=None, lead_captured=False, auth="V
         overall = min(overall, 49)               # a compliance breach caps the score, whatever else went well
 
     misses = [c for c in service + sales if not c["pass"]]
-    coach = ("Compliance breach: %s." % breach[0]["name"].lower()) if breach else (
+    coach = ("Compliance breach: %s." % breach[0]["fail"]) if breach else (
         "Strongest area to work on: %s." % misses[0]["name"].lower() if misses
         else "Nothing to correct. Use this contact as a coaching example.")
     return {

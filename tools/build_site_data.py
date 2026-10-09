@@ -145,6 +145,8 @@ def build():
             "resolution": last.get("resolution_summary"),
         })
 
+    training = training_section()
+
     trained = run(api.frontier_train())
     trained.pop("created", None)             # a timestamp and a stopwatch: the only things
     trained["evaluation"].pop("seconds", None)   # here that change from one run to the next
@@ -184,7 +186,82 @@ def build():
             "audiences": [pick(a, "id", "name", "description", "neutral", "query", "unomi") for a in pf["audiences"]],
         },
         "architecture": arch,
+        "training": training,
     }
+
+
+# ── training mode: the personas, what they do with three kinds of reply, and two debriefs
+TRYOUTS = [
+    ("elena-double-charge", [
+        ("Acknowledge, then act", "I'm so sorry, Elena. That should never have happened. Let me look at your account right now."),
+        ("Just a greeting", "Hello, how can I help you today?"),
+        ("Sell into the complaint", "While I have you, there's an upgrade that would suit your usage. Shall I move you to it?"),
+    ]),
+    ("priya-individual-to-teams", [
+        ("Ask before anything", "Oh, that's frustrating. Can I ask how many of you are using the account?"),
+        ("Sympathy only", "Oh dear, that doesn't sound right at all."),
+        ("Offer first", "There's a teams plan that would fix this. Shall I upgrade you now?"),
+    ]),
+    ("ravi-creative-to-experience", [
+        ("Find out the scale", "Can I ask roughly how many images you're producing a month?"),
+        ("Brush it off", "Express libraries should handle that, I think."),
+        ("Manufacture urgency", "You really need to upgrade today, this offer ends tonight."),
+    ]),
+]
+
+
+def training_section():
+    import trainer
+    import frontdoor as fd
+    import learning
+    model, thr = learning.champion(), learning.threshold()
+    opts = trainer.options(model, thr)
+    tryouts = []
+    for sid, replies in TRYOUTS:
+        t = fd.treatment_for(sid, model, thr)
+        base = trainer.Persona(sid, t, "steady", seed=1)
+        out = []
+        for label, text in replies:
+            p = trainer.Persona(sid, t, "steady", seed=1)
+            r = p.respond(text)
+            out.append({"label": label, "text": text, "reaction": r["text"], "why": r["why"],
+                        "mood_before": base.moods[0], "mood_after": r["mood"], "mood_label": r["mood_label"],
+                        "moves": sorted(trainer.moves(text)), "flags": p.flags})
+        tryouts.append({"id": sid, "name": base.sc["customer"]["name"], "role": base.sc["customer"]["role"],
+                        "opening": base.opening(), "mood_label": trainer.mood_label(base.moods[0]),
+                        "focus": trainer.focus_for(base.sc, t), "replies": out})
+
+    def debrief_of(sid, lines, hints=0):
+        t = fd.treatment_for(sid, model, thr)
+        p = trainer.Persona(sid, t, "testing", seed=1)
+        conv = [{"role": "customer", "text": p.opening()}]
+        for line in lines:
+            conv.append({"role": "agent", "text": line})
+            r = p.respond(line)
+            conv.append({"role": "customer", "text": r["text"]})
+            if r["ended"]:
+                break
+        d = trainer.debrief({"persona": p, "treatment": t, "conversation": conv}, hints_used=hints)
+        q = d["quality"]
+        return {"customer": p.sc["customer"]["name"], "difficulty": p.difficulty["label"],
+                "overall": q["overall"], "band": q["band"], "service": q["service"], "sales": q["sales"], "compliance": q["compliance"],
+                "note": q["coaching_note"], "objectives": [pick(o, "label", "done", "bad") for o in d["objectives"]],
+                "tips": d["tips"], "moods": d["customer"]["moods"], "verdict": d["customer"]["verdict"],
+                "turns": d["turns"], "hints": hints,
+                "evidence": [pick(c, "name", "pass", "evidence") for s in q["sections"] for c in s["criteria"]]}
+
+    good = debrief_of("priya-individual-to-teams",
+                      ["Hi Priya, I'm sorry about that. It's a real nuisance when it happens mid-job. Let me take a look."]
+                      + [m["text"] for m in trainer.SCENARIO_BY_ID["priya-individual-to-teams"]["conversation"] if m["role"] == "agent"]
+                      + ["No, you keep everything you already have, and each of you gets your own sign-in.",
+                         "I'll set that up now and email the invoice details across. Is there anything else I can help with today?"], hints=1)
+    bad = debrief_of("elena-double-charge", [
+        "Hello, how can I help?",
+        "Right. While I have you, there's an upgrade option that would suit you. Shall I move you to it?",
+        "Fine. Is there anything else?"])
+    return {"difficulties": opts["difficulties"],
+            "customers": [pick(c, "id", "name", "role", "focus", "decision", "held", "opening_mood", "about") for c in opts["customers"]],
+            "tryouts": tryouts, "debriefs": {"good": good, "bad": bad}}
 
 
 def main_():

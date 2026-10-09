@@ -554,6 +554,81 @@
     if (!calm) onSeen($('.player'), function () { if (!playing && turn < 0) play(); }, '0px 0px -30% 0px');
   })();
 
+
+  // ── training mode ──────────────────────────────────────────────────────
+  (function () {
+    var T = D.training;
+    if (!T) return;
+    var MOVE = { greet: 'a greeting', empathy: 'empathy', verify: 'identity check', diagnose: 'a question, or a look at the account',
+      explain: 'an explanation', fix: 'a fix', offer: 'an offer', price: 'a price', pressure: 'pressure', close: 'a close', reflect: 'playing it back', hold: 'a hold' };
+    var WHY = {
+      advanced: ['The call moves on', 'You did what the call needed. The customer tells you the next thing — and you learn more than you asked.', 'green'],
+      answered: ['They answer, and wait', 'A straight answer to your question. Now do something with it.', 'blue'],
+      holding: ['They wait', 'Asked to hold, a customer holds. Not for long.', 'blue'],
+      stalled: ['Nothing happened', 'Words without an action. The customer repeats themselves, a little less patient than before.', 'amber'],
+      pitched_early: ['Too soon', 'An offer before the problem is understood is a pitch. The customer pushes back, and the opening is harder to reach later.', 'amber'],
+      pitched_when_not_selling: ['Compliance breach', 'An offer into a complaint. The engine had held this customer back; the debrief will cap the score at 49.', 'red'],
+      pressure: ['Pressure', 'Manufactured urgency. The customer refuses to decide on the spot, and trusts you less.', 'red']
+    };
+    var cur = 0, tabs = $('#tryTabs');
+    tabs.innerHTML = T.tryouts.map(function (t, i) {
+      return '<button class="tab" type="button" role="tab" data-i="' + i + '"><b>' + esc(t.name.split(' ')[0]) + '</b><small>arrives ' + esc(t.mood_label) + '</small></button>';
+    }).join('');
+    function moodBar(a, b, label) {
+      return '<div class="mood-move"><span>Mood</span><div class="track"><i style="width:' + Math.round(b * 100) + '%;background:' + TONE[b < 0.3 ? 'red' : b < 0.45 ? 'amber' : 'green'] + '"></i></div>' +
+        '<b>' + esc(label) + '</b><span class="' + (b > a ? 'up-t' : b < a ? 'down-t' : 'muted') + '">' + (b > a ? '▲' : b < a ? '▼' : '—') + '</span></div>';
+    }
+    function show(sel) {
+      var t = T.tryouts[cur];
+      $$('.tab', tabs).forEach(function (b, i) { b.classList.toggle('on', i === cur); b.setAttribute('aria-selected', i === cur ? 'true' : 'false'); });
+      $('#tryCust').innerHTML = '<div class="who"><b>' + esc(t.name) + '</b><span>' + esc(t.role) + '</span><span class="tag tag-' +
+        (t.mood_label === 'upset' ? 'red' : t.mood_label === 'wary' ? 'amber' : 'blue') + '">' + esc(t.mood_label) + '</span></div><blockquote>' + esc(t.opening) +
+        '</blockquote><p class="fine">In the application this is spoken aloud, in ' + esc(t.name.split(' ')[0]) + '\u2019s own voice. The lesson: ' + esc(t.focus.toLowerCase()) + '.</p>';
+      $('#tryReplies').innerHTML = t.replies.map(function (r, i) {
+        return '<button class="reply' + (sel === i ? ' on' : '') + '" type="button" data-i="' + i + '" aria-pressed="' + (sel === i ? 'true' : 'false') + '"><b>' + esc(r.label) + '</b><span>' + esc(r.text) + '</span></button>';
+      }).join('');
+      var box = $('#tryResult');
+      if (sel == null) { box.hidden = true; return; }
+      var r = t.replies[sel], w = WHY[r.why] || ['The customer reacts', '', 'blue'];
+      box.hidden = false;
+      box.innerHTML = '<div class="reaction"><div class="who"><b>' + esc(t.name.split(' ')[0]) + '</b><span class="muted">replies</span></div><p>' + esc(r.reaction) + '</p></div>' +
+        '<div class="verdict-box"><h4><span class="tag tag-' + w[2] + '">' + esc(w[0]) + '</span></h4>' + moodBar(r.mood_before, r.mood_after, r.mood_label) +
+        '<p>' + esc(w[1]) + '</p><p class="fine" style="margin-top:10px">What the engine heard in your words: ' +
+        (r.moves.length ? esc(r.moves.map(function (m) { return MOVE[m] || m; }).join(', ')) : 'nothing it could act on') + '.</p></div>';
+    }
+    tabs.addEventListener('click', function (e) { var b = e.target.closest('.tab'); if (!b) return; cur = +b.dataset.i; show(null); });
+    $('#tryReplies').addEventListener('click', function (e) { var b = e.target.closest('.reply'); if (!b) return; show(+b.dataset.i); });
+    show(null);
+
+    $('#skills').innerHTML = T.customers.map(function (c) {
+      var tag = c.held ? '<span class="tag tag-red">Held back</span>' : c.decision === 'sell' ? '<span class="tag tag-green">Sell</span>' : '<span class="tag tag-grey">Solve</span>';
+      return '<div class="skill"><header><b>' + esc(c.name.split(' ')[0]) + '</b>' + tag + '</header><p><strong>Practise:</strong> ' + esc(c.focus) + '</p><small>Arrives ' + esc(c.opening_mood) + '</small></div>';
+    }).join('');
+
+    function debrief(d, title) {
+      var C = 2 * Math.PI * 31, tone = d.compliance === 'breach' ? 'red' : d.overall >= 90 ? 'green' : d.overall >= 75 ? 'blue' : 'amber';
+      var w = 150, h = 34, pts = d.moods.map(function (m, i) { return ((i / Math.max(1, d.moods.length - 1)) * w).toFixed(1) + ',' + (h - m * h).toFixed(1); }).join(' ');
+      return '<div class="dbf"><div class="dbf-top"><div class="dbf-ring"><svg viewBox="0 0 74 74"><circle cx="37" cy="37" r="31" style="stroke:var(--fill-3)"/>' +
+        '<circle cx="37" cy="37" r="31" style="stroke:' + TONE[tone] + '" stroke-linecap="round" stroke-dasharray="' + (C * d.overall / 100).toFixed(1) + ' ' + C.toFixed(1) + '"/></svg><b>' + d.overall + '</b></div>' +
+        '<div><h3>' + esc(title) + '</h3><p>' + esc(d.customer) + ' · ' + esc(d.difficulty) + ' · ' + d.turns + ' turns · ' + d.hints + ' hint' + (d.hints === 1 ? '' : 's') + '</p>' +
+        '<span class="tag tag-' + tone + '">' + esc(d.band) + (d.compliance === 'breach' ? ' · compliance breach' : '') + '</span></div></div>' +
+        '<ul>' + d.objectives.map(function (o) {
+          var k = o.bad ? 'bad' : o.done ? 'ok' : 'miss';
+          return '<li class="' + k + '"><i>' + (o.bad ? '✕' : o.done ? '✓' : '–') + '</i><span>' + esc(o.label) + '</span></li>';
+        }).join('') + '</ul>' +
+        '<div class="mood"><svg width="' + w + '" height="' + (h + 4) + '" viewBox="0 -2 ' + w + ' ' + (h + 4) + '"><line x1="0" x2="' + w + '" y1="' + h / 2 + '" y2="' + h / 2 + '" style="stroke:var(--line-2)" stroke-dasharray="3 4"/>' +
+        '<polyline points="' + pts + '" fill="none" style="stroke:' + TONE[tone] + '" stroke-width="2.5" stroke-linejoin="round"/></svg><span>' + esc(d.verdict) + '</span></div>' +
+        '<p class="note" style="background:' + (tone === 'red' ? 'rgba(255,107,107,.1)' : tone === 'amber' ? 'rgba(246,185,74,.1)' : 'rgba(47,214,163,.1)') + ';color:var(--' + tone + ')">' + esc(d.tips[0] || d.note) + '</p></div>';
+    }
+    $('#debriefs').innerHTML = debrief(T.debriefs.good, 'A good call') + debrief(T.debriefs.bad, 'The customer the engine held back, sold to');
+
+    $('#trainShots').innerHTML = [['training-pick', 'Choosing a customer', 'Nine customers, three difficulties, and a sound check.'],
+      ['training-call', 'On the call', 'Your words as you speak them; the customer\u2019s reply in their voice; the checklist filling in.'],
+      ['training-debrief', 'The debrief', 'Score with evidence, how the customer felt, what to work on next.']].map(function (s) {
+      return '<figure class="shot" style="margin:0"><img loading="lazy" decoding="async" width="1600" height="900" src="shots/' + s[0] + '.webp" alt="' + esc(s[1] + ': ' + s[2]) + '"><div><b>' + esc(s[1]) + '</b><span>' + esc(s[2]) + '</span></div></figure>';
+    }).join('');
+  })();
+
   // ── guardrails ─────────────────────────────────────────────────────────
   (function () {
     var ICON = {
