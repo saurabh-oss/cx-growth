@@ -9,7 +9,7 @@ ends as a qualified lead. One that contains a complaint never becomes a sales pi
 
 It runs on one laptop, offline, with one command. There is no build step.
 
-**[Try the decision engine in your browser →](https://saurabh-oss.github.io/icx-growth/)**
+**[Try the decision engine in your browser →](https://saurabh-oss.github.io/cx-growth/)**
 
 ![Overview](docs/overview.png)
 
@@ -99,7 +99,7 @@ The first start pulls about 1.5 GB and takes a minute or two. If Unomi is not re
 the app says so at start-up and uses the built-in store — a stopped container cannot
 take the demo down. `docker compose stop` in `platform/` stops it and keeps the data.
 
-**Run the tests.** 43 tests, about five seconds, no server and no network.
+**Run the tests.** 46 tests, about five seconds, no server and no network.
 
 ```bash
 python -m unittest discover -s tests -v
@@ -352,7 +352,7 @@ A decision engine is only as portable as the data it reads. This prototype fixes
 
 1. **Profiles and events share one shape**: `identityMap`, `person.name`, `consents`,
    `eventType`, `timestamp`, in the style of the openly published customer data schemas.
-   Everything specific to this demo sits under a tenant namespace, `_icxdemo`.
+   Everything specific to this demo sits under a tenant namespace, `_cxdemo`.
 2. **Audiences are defined once**, in a small neutral condition tree, and rendered three
    ways — evaluated in Python, as a Unomi condition, and as a query-language expression.
 3. **The engine never names the platform.** It calls `get_profile`, `record_event`,
@@ -427,15 +427,22 @@ by the browser from the transcript. There is no recording, and it works offline.
 **Practice a call**, under *For agents* in the menu, or `?page=training`. The roles of the
 live contact are reversed: the engine plays the customer and a human agent takes the call.
 
-- **It is a phone call.** The softphone rings. The agent presses Accept, the customer
-  speaks first — synthesised in the browser, in a customer's voice — and the agent answers
-  out loud. The microphone opens by itself after each customer turn (hands-free), or on a
-  push-to-talk button; typing always works. Nothing is recorded.
-- **The customer is a persona, not a recording.** Each of the nine demo contacts becomes a
-  persona whose story is the customer's side of the scripted call. What moves the story
-  forward is what the scripted agent did at that point — classified by the same detector
-  the trainee's words go through. Do what a good agent does and the call flows; stall and
-  the customer stalls; sell into a complaint and the customer gets angry. Three
+- **It is a phone call.** The softphone rings; the agent presses Accept and answers — the
+  customer waits for the agent to speak first, and says hello themselves if nobody does.
+  The microphone stays open (hands-free) and sends when the agent pauses, so it runs at
+  the pace of a conversation; push-to-talk and typing also work. Nothing is recorded.
+- **Each customer has their own voice.** A voice of the gender the persona is written as
+  — declared with the persona, not guessed from a name — chosen from the voices on the
+  machine, so customers sound different from each other. Their pace follows their mood.
+  The words appear as they are spoken, over a faint phone-line hiss.
+- **The customer behaves like one.** Asked a question about themselves — their postcode,
+  when it started, how many people use the account — they answer it. Asked to hold, they
+  wait. Left in silence, they say "Hello? Are you still there?", and on the harder settings
+  they hang up. With headphones on, the agent can talk over them; an upset customer minds.
+- **The story is the scripted call.** Each of the nine demo contacts becomes a persona whose
+  story is the customer's side of the scripted call. What moves it forward is what the
+  scripted agent did at that point, classified by the same detector the trainee's words go
+  through. Stall and the customer stalls; sell into a complaint and they get angry. Three
   difficulties add objections and a shorter fuse.
 - **Everything the workspace does happens behind it** — signals heard, the opportunity
   score, the engine's decision, the customer's mood as it moves — plus a live checklist of
@@ -542,7 +549,7 @@ separately), guardrail evidence, and a phased roadmap.
 
 ![The target architecture, with what is built and what is not](docs/shots/architecture.webp)
 
-The [website](https://saurabh-oss.github.io/icx-growth/#architecture) has this as an interactive
+The [website](https://saurabh-oss.github.io/cx-growth/#architecture) has this as an interactive
 diagram: select a component to read what is real, or follow one contact through all of it.
 
 | Status | Count | Components |
@@ -630,7 +637,7 @@ and restores every customer.
 ## Folder structure
 
 ```
-icx-growth/
+cx-growth/
 ├── backend/
 │   ├── main.py              Start here: loads the brand pack, then the application
 │   ├── app.py               API
@@ -659,7 +666,7 @@ icx-growth/
 ├── platform/
 │   └── docker-compose.yml   Apache Unomi and Elasticsearch
 ├── tests/
-│   └── test_engine.py       43 tests
+│   └── test_engine.py       46 tests
 ├── docs/                    The project website (GitHub Pages) and screenshots
 ├── tools/
 │   └── build_site_data.py   Exports the engine's results for the website
@@ -669,7 +676,7 @@ icx-growth/
 └── README.md
 ```
 
-`backend/leads.db` and `backend/icx.db` are created at run time. Both can be deleted.
+`backend/leads.db` and `backend/cx.db` are created at run time. Both can be deleted.
 
 ## The website
 

@@ -207,7 +207,8 @@ def scenario_view(s, full=True):
                                  "frontierModel": t["model_version"]}
     out = {"id": s["id"], "title": s["title"], "description": s["description"], "type": s["type"],
            "icon": s["icon"], "customer": s["customer"], "contact": contact, "treatment": t,
-           "triage": triage, "translation": s.get("translation"), "profile_id": dp.PROFILE_ID[s["id"]]}
+           "triage": triage, "translation": s.get("translation"), "profile_id": dp.PROFILE_ID[s["id"]],
+           "voice": {**trainer.voice_for(s["id"]), "key": s["id"]}}
     if not full:
         return out
 
@@ -1071,11 +1072,14 @@ Rewrite that line so it answers what the agent just said, in your own words and 
     return line if 8 <= len(line) <= 400 else None
 
 
+VOICE_TIMEOUT_SECONDS = 3.0   # longer than this and the pause stops sounding like thought
+
+
 async def voice_with_claude(brief, transcript, planned, why):
     if not ai_available():
         return None
     try:
-        r = await asyncio.wait_for(asyncio.to_thread(_voice_sync, brief, transcript, planned, why), timeout=AI_TIMEOUT_SECONDS)
+        r = await asyncio.wait_for(asyncio.to_thread(_voice_sync, brief, transcript, planned, why), timeout=VOICE_TIMEOUT_SECONDS)
         _ai_state["failures"] = 0
         return r
     except Exception as e:                                   # noqa: BLE001 — best effort, never breaks the call
@@ -1119,7 +1123,8 @@ async def training_start(request: Request):
     sid = body.get("persona")
     if sid not in trainer.SCENARIO_BY_ID:
         raise HTTPException(404, "No such customer")
-    s = trainer.start(sid, body.get("difficulty") or "steady", learning.champion(), learning.threshold())
+    agent_first = body.get("agent_first", True) is not False
+    s = trainer.start(sid, body.get("difficulty") or "steady", learning.champion(), learning.threshold(), agent_first=agent_first)
     p, t = s["persona"], s["treatment"]
     s["started"] = time.time()
     TRAIN[s["id"]] = s
@@ -1143,7 +1148,8 @@ async def training_start(request: Request):
         "opening": {"text": opening, "mood": p.state()["mood"], "mood_label": p.state()["mood_label"]},
         "objectives": p.objectives([]),
         "analysis": _training_analysis(s),
-        "voice": {"lang": "en-GB", "role": "customer"},
+        "voice": {**trainer.voice_for(sid), "lang": "en-GB", "key": sid},
+        "agent_first": agent_first,
     }
 
 
@@ -1157,21 +1163,36 @@ async def training_turn(request: Request):
     if not text:
         raise HTTPException(400, "Nothing was said")
     p = s["persona"]
-    if not s["conversation"]:
+    if not s["conversation"] and p.opened:
         s["conversation"].append({"role": "customer", "text": p.opening(), "delay": 0})
     now = int(time.time() - s["started"])
     s["conversation"].append({"role": "agent", "text": text[:1200], "delay": now})
     m = trainer.moves(text)
-    reply = p.respond(text, m)
-    if reply["why"] not in ("ended",) and ai_available():
+    reply = p.respond(text, m, interrupted=bool(body.get("interrupted")))
+    if reply["why"] not in ("ended", "hung_up", "holding") and ai_available():
         brief = "%s. %s. Plan: %s. Mood right now: %s. Reason for calling: %s." % (
             p.sc["customer"]["name"], p.sc["customer"]["role"], p.sc["customer"]["tier"], reply["mood_label"], p.sc["description"])
         voiced = await voice_with_claude(brief, _transcript(s["conversation"]), reply["text"], reply["why"])
         if voiced:
             reply = {**reply, "text": voiced, "voiced_by": "claude"}
-    s["conversation"].append({"role": "customer", "text": reply["text"], "delay": now + 2})
+    s["conversation"].append({"role": "customer", "text": reply["text"], "delay": now + 1})
     return {"agent_moves": sorted(m), "customer": reply, "persona": p.state(),
             "objectives": p.objectives(s["conversation"]), "analysis": _training_analysis(s), "ended": p.ended}
+
+
+@app.post("/api/training/nudge")
+async def training_nudge(request: Request):
+    """The agent has gone quiet. The customer fills the silence — and may give up."""
+    body = await request.json()
+    s = TRAIN.get(body.get("session_id"))
+    if not s:
+        raise HTTPException(404, "Practice call not found — it may have ended")
+    p = s["persona"]
+    reply = p.nudge()
+    if reply["text"]:
+        s["conversation"].append({"role": "customer", "text": reply["text"], "delay": int(time.time() - s["started"])})
+    return {"customer": reply, "persona": p.state(), "objectives": p.objectives(s["conversation"]),
+            "analysis": _training_analysis(s), "ended": p.ended}
 
 
 @app.post("/api/training/end")

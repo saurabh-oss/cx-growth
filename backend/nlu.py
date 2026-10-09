@@ -247,7 +247,7 @@ def coaching(stage, treatment, signals, profile, intent_id):
 def replies(stage, treatment, conversation, profile, intent_id):
     """What the agent might say next. Offered, never sent automatically."""
     first = ((profile or {}).get("person", {}).get("name", {}).get("firstName")) or "there"
-    ent = ((profile or {}).get("_icxdemo", {}) or {}).get("entitlement", {})
+    ent = ((profile or {}).get("_cxdemo", {}) or {}).get("entitlement", {})
     plan = ent.get("planName", "your plan")
     offer = treatment.get("offer")
     agent_turns = sum(1 for m in conversation if m["role"] == "agent")

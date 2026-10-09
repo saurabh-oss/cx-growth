@@ -16,7 +16,7 @@
 # The credentials below are Unomi's defaults and the ports are bound to localhost only.
 # This is a demo configuration. Do not expose it to a network.
 
-name: icx-unomi
+name: cx-unomi
 
 services:
   elasticsearch:

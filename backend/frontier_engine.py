@@ -91,7 +91,7 @@ def _clamp(v, lo=0.0, hi=1.0):
 
 
 def _t(profile):
-    t = profile.get("_icxdemo", {})
+    t = profile.get("_cxdemo", {})
     return (t.get("entitlement", {}), t.get("usage", {}), t.get("service", {}),
             t.get("health", {}), t.get("commercial", {}))
 
@@ -378,7 +378,7 @@ def guardrails(profile, ctx, segment, now=None):
 def route(profile, ctx, segment, decision, offer):
     e = _t(profile)[0]
     i = intent(ctx.get("intent"))
-    smb = profile.get("_icxdemo", {}).get("customerType") == "Small Business"
+    smb = profile.get("_cxdemo", {}).get("customerType") == "Small Business"
     queue = QUEUES["smb"] if smb else QUEUES[i["queue"]]
 
     if segment == "recovery":

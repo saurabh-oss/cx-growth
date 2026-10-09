@@ -193,15 +193,21 @@ const pickVoice=(lang,role)=>{
   // Two different voices where the system has them, so the speakers can be told apart.
   return role==='agent'?pool[0]:pool[pool.length>1?1:0];
 };
-const say=(text,lang,role,rate)=>new Promise(resolve=>{
+const say=(text,lang,role,rate,cv)=>new Promise(resolve=>{
   let done=false;
   const finish=()=>{if(!done){done=true;resolve();}};
   try{
     const u=new SpeechSynthesisUtterance(text);
-    const v=pickVoice(lang,role);
+    // With a declared customer voice: the customer in theirs, the agent in a different one.
+    let v=null,pitch=role==='agent'?0.95:1.08;
+    if(cv&&typeof chooseVoice==='function'){
+      const cust=chooseVoice(lang,cv.gender,cv.key);
+      if(role==='customer'&&cust){v=cust.voice;pitch=(cv.pitch||1)*(cust.matched?1:(cv.gender==='female'?1.25:0.78));}
+      else{const ag=chooseVoice(lang,null,'agent',cust?cust.voice.name:null);v=ag?ag.voice:null;pitch=0.98;}
+    }else v=pickVoice(lang,role);
     if(v)u.voice=v;
     u.lang=lang;u.rate=Math.max(0.7,Math.min(1.9,rate));
-    u.pitch=role==='agent'?0.95:1.08;
+    u.pitch=pitch;
     u.onend=finish;u.onerror=finish;
     window.speechSynthesis.speak(u);
     // Some engines never fire onend. Allow reading time, then move on regardless.
@@ -209,16 +215,111 @@ const say=(text,lang,role,rate)=>new Promise(resolve=>{
   }catch(e){finish();}
 });
 // A translated turn is heard twice: as it was said, then as the other party hears it.
-const speak=(msg,speed)=>{
-  const rate=1.02*(speed||1);
+const speak=(msg,speed,cv)=>{
+  const rate=1.02*(speed||1)*(msg.role==='customer'&&cv&&cv.rate?cv.rate:1);
   const own=msg.lang==='es'?'es-ES':'en-GB';
   const other=msg.text_en||msg.text_translated;
   const otherLang=msg.text_en?'en-GB':'es-ES';
-  let p=say(msg.text,own,msg.role,rate);
-  if(other)p=p.then(()=>say(other,otherLang,msg.role==='agent'?'customer':'agent',rate*1.06));
+  let p=say(msg.text,own,msg.role,rate,cv);
+  // The translation is the interpreter speaking, so it keeps the speaker's gender.
+  if(other)p=p.then(()=>say(other,otherLang,msg.role,rate*1.06,cv));
   return p;
 };
 const speechInput=()=>typeof window!=='undefined'&&(window.SpeechRecognition||window.webkitSpeechRecognition)||null;
+
+// ─── VOICES ───
+// Which system voice is which. A voice object carries no gender, so it is read from the
+// voice's own published name (Microsoft Sonia, Google UK English Male) — never from a
+// customer's name. Each customer's gender is declared with the persona.
+const VOICE_NAMES={
+  female:['female','woman','zira','hazel','susan','sonia','libby','maisie','jenny','aria','ana','michelle','natasha','clara','emily',
+    'heera','neerja','kalpana','catherine','linda','eva','karen','moira','tessa','samantha','victoria','allison','ava','serena','kate',
+    'fiona','veena','ellie','hollie','abbie','abbi','bella','olivia','amy','emma','nova','sara','sarah','elvira','helena','laura','lucia',
+    'paloma','ximena','dalia','sabela','monica','paulina','salome','zoe','isabella','mia','joanna','kendra','kimberly','ivy','salli',
+    'nicole','raveena','aditi','esperanza','martha','jessa','molly','nancy','ashley','cora','elizabeth','jane','sonia'],
+  male:['male','man','david','mark','george','ryan','thomas','guy','christopher','eric','roger','steffan','brian','andrew','william',
+    'liam','prabhat','james','richard','sean','daniel','arthur','oliver','rishi','alex','fred','aaron','ethan','noah','elliot','alfie',
+    'ollie','jorge','alvaro','pablo','raul','diego','enrique','gonzalo','matthew','joey','justin','russell','geraint','kevin','tony',
+    'jacob','davis','jason','connor','luke','brandon','davide','tom','ravi','hemant'],
+};
+const _VOICE_RX={female:new RegExp('\\b('+VOICE_NAMES.female.join('|')+')\\b'),male:new RegExp('\\b('+VOICE_NAMES.male.join('|')+')\\b')};
+const voiceGender=(v)=>{
+  const n=(v&&v.name||'').toLowerCase().replace(/microsoft|google|apple|online|natural|neural|premium|enhanced|english|united kingdom|united states|\(.*?\)/g,' ');
+  if(/\bfemale\b/.test(n)||/^google us english$/i.test((v&&v.name)||''))return 'female';
+  if(/\bmale\b/.test(n))return 'male';
+  const f=_VOICE_RX.female.test(n), m=_VOICE_RX.male.test(n);
+  return f&&!m?'female':m&&!f?'male':null;
+};
+const voiceQuality=(v)=>/natural|neural|online|premium|enhanced|wavenet/i.test(v.name)?3:/google/i.test(v.name)?2:/microsoft/i.test(v.name)?1:0;
+const hashStr=(s)=>{let h=7;for(let i=0;i<(s||'').length;i++)h=(h*31+s.charCodeAt(i))|0;return Math.abs(h);};
+// The best voice of the right gender for a language; customers with the same gender get
+// different voices where the machine has more than one.
+function chooseVoice(lang,gender,key,exclude){
+  if(!canSpeak())return null;
+  const all=window.speechSynthesis.getVoices()||[];
+  const want=(lang||'en-GB').toLowerCase(), pre=want.slice(0,2);
+  const pool=all.filter(v=>v.lang&&v.lang.toLowerCase().replace('_','-').startsWith(pre)&&v.name!==exclude);
+  if(!pool.length)return null;
+  const scored=pool.map(v=>{
+    const g=voiceGender(v), exact=v.lang.toLowerCase().replace('_','-')===want;
+    return {v,g,s:(gender?(g===gender?40:g?-40:0):0)+voiceQuality(v)*4+(exact?6:0)};
+  });
+  const best=Math.max(...scored.map(x=>x.s));
+  const top=scored.filter(x=>x.s>=best-12);
+  const pick=top[hashStr(key||'')%top.length];
+  return {voice:pick.v,gender:pick.g,matched:!gender||pick.g===gender};
+}
+// A customer's voice: the chosen system voice, with their own pitch and pace. Where the
+// machine has no voice of the right gender, the nearest one is pitched towards it.
+const customerVoice=(cv)=>{
+  const v=cv||{};
+  const c=chooseVoice(v.lang||'en-GB',v.gender,v.key||'');
+  const shift=!c||c.matched?1:(v.gender==='female'?1.25:v.gender==='male'?0.78:1);
+  return {voice:c?c.voice:null,name:c?c.voice.name:null,matched:!!(c&&c.matched),gender:v.gender||null,
+    pitch:(v.pitch||1)*shift,rate:v.rate||1,lang:v.lang||'en-GB'};
+};
+function useVoices(){
+  const[n,setN]=useState(()=>canSpeak()?(window.speechSynthesis.getVoices()||[]).length:0);
+  useEffect(()=>{
+    if(!canSpeak())return;
+    const f=()=>setN((window.speechSynthesis.getVoices()||[]).length);
+    f();
+    try{window.speechSynthesis.addEventListener('voiceschanged',f);}catch(e){window.speechSynthesis.onvoiceschanged=f;}
+    return()=>{try{window.speechSynthesis.removeEventListener('voiceschanged',f);}catch(e){}};
+  },[]);
+  return n;
+}
+// Speak a line sentence by sentence, as a person does: each sentence follows the last at
+// once, a long line never trips an engine's length limit, and it can be cut off midway.
+const speakLine=(text,o={})=>new Promise(resolve=>{
+  if(!canSpeak()){resolve();return;}
+  const parts=(text||'').match(/[^.!?…]+[.!?…]*["”’)]*\s*/g)||[text||''];
+  let i=0,done=false,spoken=0;
+  const finish=()=>{if(!done){done=true;resolve();}};
+  const next=()=>{
+    if(done)return;
+    if(o.cancelled&&o.cancelled()){finish();return;}
+    if(i>=parts.length){finish();return;}
+    const part=parts[i++].trim();
+    if(!part){next();return;}
+    const base=spoken;spoken+=parts[i-1].length;
+    let over=false,guard=null;
+    const go=()=>{if(over)return;over=true;clearTimeout(guard);if(o.onProgress)o.onProgress(spoken);next();};
+    try{
+      const u=new SpeechSynthesisUtterance(part);
+      if(o.voice)u.voice=o.voice;
+      u.lang=o.lang||(o.voice&&o.voice.lang)||'en-GB';
+      u.rate=Math.max(0.7,Math.min(1.6,o.rate||1));
+      u.pitch=Math.max(0.5,Math.min(1.8,o.pitch||1));
+      u.onboundary=(e)=>{if(o.onProgress&&typeof e.charIndex==='number'){o.onBoundary&&o.onBoundary();o.onProgress(base+e.charIndex+(e.charLength||1));}};
+      u.onend=go;u.onerror=go;
+      window.speechSynthesis.speak(u);
+      // Some engines never fire onend. Allow speaking time, then move on regardless.
+      guard=setTimeout(go,Math.max(2500,part.length*95/Math.max(0.7,u.rate)));
+    }catch(e){go();}
+  };
+  next();
+});
 
 // Agent states, as Amazon Connect models them.
 const AGENT_STATES={
@@ -886,10 +987,10 @@ function App(){
   // Shell: menu, text size, and the tour's presentation state
   const[navClosed,setNavClosed]=useState(false);
   const[scaleChoice,setScaleChoice]=useState(()=>{
-    try{const v=parseFloat(localStorage.getItem('icx-scale'));return v>=0.8&&v<=1.8?v:null;}catch(e){return null;}
+    try{const v=parseFloat(localStorage.getItem('cx-scale'));return v>=0.8&&v<=1.8?v:null;}catch(e){return null;}
   });
   const[fitScale,setFitScale]=useState(1);
-  const[notes,setNotes]=useState(()=>{try{return localStorage.getItem('icx-notes')==='1';}catch(e){return false;}});
+  const[notes,setNotes]=useState(()=>{try{return localStorage.getItem('cx-notes')==='1';}catch(e){return false;}});
   const[chapter,setChapter]=useState(null);       // the chapter card on screen, if any
   const[barHeight,setBarHeight]=useState(96);
   const[techTab,setTechTab]=useState('platform');
@@ -1042,11 +1143,11 @@ function App(){
   const scale=scaleChoice||fitScale;
   const setScale=(v)=>{
     setScaleChoice(v);
-    try{if(v)localStorage.setItem('icx-scale',String(v));else localStorage.removeItem('icx-scale');}catch(e){}
+    try{if(v)localStorage.setItem('cx-scale',String(v));else localStorage.removeItem('cx-scale');}catch(e){}
   };
   const toggleNotes=(v)=>{
     setNotes(v);
-    try{localStorage.setItem('icx-notes',v?'1':'0');}catch(e){}
+    try{localStorage.setItem('cx-notes',v?'1':'0');}catch(e){}
   };
 
   // Talk timer while connected; ACW timer during wrap-up.
@@ -1222,7 +1323,7 @@ function App(){
         turnRef.current=t+1;
         if(audioOnRef.current&&canSpeak()){
           // With audio on, the turn lasts as long as it takes to say.
-          speak(msg,playSpeedRef.current||1).then(()=>{
+          speak(msg,playSpeedRef.current||1,sc.voice).then(()=>{
             if(run!==runId.current)return;
             playTimer.current=setTimeout(step,900/(playSpeedRef.current||1));
           });
@@ -5600,29 +5701,57 @@ function LiveLauncher({options,onStart,onClose,busy}){
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  TRAINING MODE — the agent practises; the engine plays the customer
-//  A mock call in audio. The persona speaks, the trainee answers out loud, and
-//  everything the live workspace does happens behind it. Then a debrief.
+//  A mock call in audio. The agent answers and greets, the customer replies in
+//  their own voice, the agent speaks back, and everything the live workspace does
+//  happens behind it. Then a debrief.
 // ═══════════════════════════════════════════════════════════════════════════
 
-const TRAIN_KEY='icx-training';
+const TRAIN_KEY='cx-training';
+const TRAIN_PREFS='cx-training-prefs';
 const loadAttempts=()=>{try{return JSON.parse(localStorage.getItem(TRAIN_KEY)||'[]');}catch(e){return [];}};
 const saveAttempt=(a)=>{try{localStorage.setItem(TRAIN_KEY,JSON.stringify([a,...loadAttempts()].slice(0,60)));}catch(e){}};
+const loadPrefs=()=>{try{return {handsFree:true,headphones:false,lineSound:true,...JSON.parse(localStorage.getItem(TRAIN_PREFS)||'{}')};}catch(e){return {handsFree:true,headphones:false,lineSound:true};}};
+const savePrefs=(p)=>{try{localStorage.setItem(TRAIN_PREFS,JSON.stringify(p));}catch(e){}};
 const MOOD_TONE=(m)=>m<0.3?'red':m<0.45?'amber':m<0.6?'neutral':'green';
 const DIFF_TONE={steady:'green',testing:'amber',tough:'red'};
+// How long the agent can leave the customer in silence before they speak up.
+const DEAD_AIR_MS={steady:9000,testing:8000,tough:6500};
+const GREET_MS=5000;          // the agent should answer within a few seconds
+const END_OF_SPEECH_MS=950;   // a pause this long means the agent has finished speaking
 
-// A ring tone from an oscillator — the UK double ring. Nothing is downloaded.
-function makeRinger(){
-  let ac=null,timer=null;
-  const tone=(at,dur)=>{
-    const g=ac.createGain();
-    g.gain.setValueAtTime(0.0001,at);g.gain.exponentialRampToValueAtTime(0.16,at+0.02);g.gain.exponentialRampToValueAtTime(0.0001,at+dur);
-    g.connect(ac.destination);
-    [400,450].forEach(f=>{const o=ac.createOscillator();o.type='sine';o.frequency.value=f;o.connect(g);o.start(at);o.stop(at+dur+0.05);});
+// The phone line: ring, connect, ambient line noise, and the hang-up tone. All generated
+// in the browser; nothing is downloaded.
+function makePhone(){
+  let ac=null,ringTimer=null,noise=null;
+  const ctx=()=>{if(!ac){try{ac=new (window.AudioContext||window.webkitAudioContext)();}catch(e){ac=null;}}return ac;};
+  const tone=(freqs,at,dur,vol)=>{
+    const c=ctx();if(!c)return;
+    const g=c.createGain();
+    g.gain.setValueAtTime(0.0001,at);g.gain.exponentialRampToValueAtTime(vol,at+0.02);g.gain.exponentialRampToValueAtTime(0.0001,at+dur);
+    g.connect(c.destination);
+    freqs.forEach(f=>{const o=c.createOscillator();o.type='sine';o.frequency.value=f;o.connect(g);o.start(at);o.stop(at+dur+0.05);});
   };
-  const cycle=()=>{if(!ac)return;const t=ac.currentTime+0.05;tone(t,0.4);tone(t+0.6,0.4);timer=setTimeout(cycle,3000);};
+  const ringCycle=()=>{const c=ctx();if(!c)return;const t=c.currentTime+0.05;tone([400,450],t,0.4,0.16);tone([400,450],t+0.6,0.4,0.16);ringTimer=setTimeout(ringCycle,3000);};
   return{
-    start(){try{ac=new (window.AudioContext||window.webkitAudioContext)();cycle();}catch(e){ac=null;}},
-    stop(){clearTimeout(timer);try{if(ac)ac.close();}catch(e){}ac=null;},
+    ring(){clearTimeout(ringTimer);ringCycle();},
+    stopRing(){clearTimeout(ringTimer);},
+    connect(){const c=ctx();if(!c)return;const t=c.currentTime+0.02;tone([1200],t,0.05,0.05);tone([900],t+0.09,0.06,0.05);},
+    hangup(){const c=ctx();if(!c)return;const t=c.currentTime+0.05;[0,0.4,0.8].forEach(d=>tone([425],t+d,0.2,0.09));},
+    line(on){
+      const c=ctx();if(!c)return;
+      if(!on){try{if(noise){noise.src.stop();noise=null;}}catch(e){noise=null;}return;}
+      if(noise)return;
+      // Soft brown noise, band-limited like a phone line.
+      const len=c.sampleRate*2, buf=c.createBuffer(1,len,c.sampleRate), d=buf.getChannelData(0);
+      let last=0;for(let i=0;i<len;i++){const w=Math.random()*2-1;last=(last+0.02*w)/1.02;d[i]=last*3.2;}
+      const src=c.createBufferSource();src.buffer=buf;src.loop=true;
+      const lp=c.createBiquadFilter();lp.type='lowpass';lp.frequency.value=1700;
+      const hp=c.createBiquadFilter();hp.type='highpass';hp.frequency.value=260;
+      const g=c.createGain();g.gain.value=0.018;
+      src.connect(hp);hp.connect(lp);lp.connect(g);g.connect(c.destination);src.start();
+      noise={src};
+    },
+    close(){clearTimeout(ringTimer);try{if(noise)noise.src.stop();}catch(e){}noise=null;try{if(ac)ac.close();}catch(e){}ac=null;},
   };
 }
 
@@ -5642,8 +5771,9 @@ function TrainingPage({workspace,aiEnabled,onBusy}){
   const[held,setHeld]=useState(false);
   const[speaking,setSpeaking]=useState(false);
   const[listening,setListening]=useState(false);
-  const[interim,setInterim]=useState('');
-  const[handsFree,setHandsFree]=useState(true);
+  const[agentLive,setAgentLive]=useState('');      // what the agent is saying, as it is heard
+  const[caption,setCaption]=useState(null);        // how much of the customer's line has been spoken
+  const[prefs,setPrefsState]=useState(loadPrefs);
   const[text,setText]=useState('');
   const[busy,setBusy]=useState(false);
   const[hintOpen,setHintOpen]=useState(false);
@@ -5653,129 +5783,245 @@ function TrainingPage({workspace,aiEnabled,onBusy}){
   const[profile,setProfile]=useState(null);
   const[leftTab,setLeftTab]=useState('transcript');
   const[micNote,setMicNote]=useState('');
-  const rec=useRef(null), ring=useRef(makeRinger()), runId=useRef(0), chatRef=useRef(null);
-  const sessionRef=useRef(null), phaseRef=useRef('pick'), handsFreeRef=useRef(true), mutedRef=useRef(false);
-  const speakingRef=useRef(false), restarts=useRef(0), secondsRef=useRef(0), hintsRef=useRef(0);
-  phaseRef.current=phase;handsFreeRef.current=handsFree;mutedRef.current=muted;speakingRef.current=speaking;secondsRef.current=seconds;hintsRef.current=hints;
+  const[status,setStatus]=useState('');
+  const voicesReady=useVoices();
+  const rec=useRef(null), phone=useRef(null), runId=useRef(0), chatRef=useRef(null), idle=useRef(null);
+  const sessionRef=useRef(null), phaseRef=useRef('pick'), prefsRef=useRef(prefs), mutedRef=useRef(false), heldRef=useRef(false);
+  const speakingRef=useRef(false), busyRef=useRef(false), secondsRef=useRef(0), hintsRef=useRef(0), interruptedRef=useRef(false);
+  const voiceRef=useRef(null), captionRef=useRef(null), msgCount=useRef(0);
+  phaseRef.current=phase;prefsRef.current=prefs;mutedRef.current=muted;heldRef.current=held;
+  speakingRef.current=speaking;busyRef.current=busy;secondsRef.current=seconds;hintsRef.current=hints;
   const Speech=speechInput();
+  if(!phone.current)phone.current=makePhone();
+  const setPrefs=(p,keep=true)=>{const n={...prefsRef.current,...p};prefsRef.current=n;setPrefsState(n);if(keep)savePrefs(n);};
 
   useEffect(()=>{fetch(API+'/training/options').then(r=>r.json()).then(setOptions).catch(()=>{});},[]);
   useEffect(()=>{if(phase!=='connected')return;const t=setInterval(()=>setSeconds(s=>s+1),1000);return()=>clearInterval(t);},[phase]);
   useEffect(()=>{if(phase!=='debrief')return;const t=setInterval(()=>setAcw(s=>s+1),1000);return()=>clearInterval(t);},[phase]);
-  useEffect(()=>()=>{stopListening();stopSpeaking();ring.current.stop();runId.current++;},[]);
+  useEffect(()=>()=>{runId.current++;clearIdle();stopListening();stopSpeaking();phone.current.close();},[]);
   useEffect(()=>{onBusy&&onBusy(phase!=='pick');},[phase]);
-  useEffect(()=>{if(muted)stopListening();else if(phase==='connected'&&handsFree&&!speakingRef.current&&!busy)startListening();},[muted]);
-  const scrollChat=()=>setTimeout(()=>{if(chatRef.current)chatRef.current.scrollTop=chatRef.current.scrollHeight;},80);
+  useEffect(()=>{
+    if(phase!=='connected')return;
+    if(muted||held){stopListening();}
+    else if(!speakingRef.current&&!busyRef.current)listenIfReady();
+    if(held)clearIdle();else if(!speakingRef.current&&!busyRef.current)armIdle();
+  },[muted,held]);
+  useEffect(()=>{if(phase==='connected')phone.current.line(prefs.lineSound);},[prefs.lineSound,phase]);
+  const scrollChat=()=>setTimeout(()=>{if(chatRef.current)chatRef.current.scrollTop=chatRef.current.scrollHeight;},60);
+  useEffect(()=>{scrollChat();},[agentLive,caption&&caption.upto]);
 
-  // ── speaking and listening
-  const stopListening=()=>{try{if(rec.current){rec.current.onend=null;rec.current.abort();}}catch(e){}rec.current=null;setListening(false);setInterim('');};
-  const startListening=()=>{
-    if(!Speech||mutedRef.current||phaseRef.current!=='connected'||speakingRef.current)return;
-    stopListening();
-    try{
-      const r=new Speech();
-      r.lang='en-GB';r.interimResults=true;r.continuous=false;r.maxAlternatives=1;
-      let finalText='';
-      r.onresult=(e)=>{
-        let s='';
-        for(let i=0;i<e.results.length;i++){s+=e.results[i][0].transcript;if(e.results[i].isFinal)finalText=s;}
-        setInterim(s);
-      };
-      r.onerror=(e)=>{
-        if(e.error==='not-allowed'||e.error==='audio-capture'||e.error==='service-not-allowed'){
-          setMicNote(e.error==='not-allowed'?'Microphone access was refused. You can type instead.':'No microphone was found. You can type instead.');
-          setHandsFree(false);
-        }
-      };
-      r.onend=()=>{
-        rec.current=null;setListening(false);setInterim('');
-        const said=finalText.trim();
-        if(said){restarts.current=0;send(said);return;}
-        // Silence. Keep listening hands-free, but not forever.
-        if(handsFreeRef.current&&phaseRef.current==='connected'&&!speakingRef.current&&!mutedRef.current&&restarts.current<12){
-          restarts.current++;setTimeout(startListening,350);
-        }else if(restarts.current>=12){setMicNote('Nothing heard for a while. Press the microphone, or type.');}
-      };
-      rec.current=r;setListening(true);setMicNote('');r.start();
-    }catch(e){setListening(false);}
+  // ── silence: the customer notices it
+  const clearIdle=()=>{clearTimeout(idle.current);idle.current=null;};
+  const armIdle=(ms)=>{
+    clearIdle();
+    if(phaseRef.current!=='connected'||heldRef.current)return;
+    const s=sessionRef.current;
+    const wait=ms||(prefsRef.current.handsFree&&Speech?DEAD_AIR_MS[(s&&s.difficulty.id)||'steady']:20000);
+    idle.current=setTimeout(nudge,wait);
   };
-  const customerSays=async(line,mood,ended)=>{
-    const run=runId.current;
-    setMessages(prev=>[...prev,{role:'customer',text:line,delay:secondsRef.current}]);scrollChat();
-    stopListening();setSpeaking(true);speakingRef.current=true;
-    if(canSpeak()){await say(line,'en-GB','customer',mood<0.3?1.1:mood<0.45?1.04:1.0);}
-    else{await new Promise(r=>setTimeout(r,Math.min(4000,800+line.length*28)));}
-    if(run!==runId.current)return;
+  const nudge=async()=>{
+    const s=sessionRef.current;
+    if(!s||phaseRef.current!=='connected'||speakingRef.current||busyRef.current||heldRef.current)return;
+    try{
+      const res=await fetch(API+'/training/nudge',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:s.id})});
+      if(!res.ok)return;
+      const d=await res.json();
+      setAnalysis(d.analysis);setObjectives(d.objectives);setPersona(d.persona);
+      if(d.customer.text)customerSays(d.customer.text,d.customer.mood,d.ended);
+    }catch(e){}
+  };
+
+  // ── listening: continuous, with our own end-of-speech detection, which is faster than the engine's
+  const stopListening=()=>{
+    const r=rec.current;rec.current=null;
+    try{if(r){r.onend=null;r.onresult=null;r.onerror=null;r.abort();}}catch(e){}
+    setListening(false);setAgentLive('');
+  };
+  const listenIfReady=()=>{
+    if(!Speech||!prefsRef.current.handsFree||mutedRef.current||heldRef.current||phaseRef.current!=='connected'||busyRef.current)return;
+    if(speakingRef.current&&!prefsRef.current.headphones)return;
+    startListening();
+  };
+  const interruptCustomer=()=>{
+    if(!speakingRef.current)return;
+    interruptedRef.current=true;
+    runId.current++;stopSpeaking();
     setSpeaking(false);speakingRef.current=false;
-    if(ended){setTimeout(()=>{if(run===runId.current)finish('customer');},1400);return;}
-    if(handsFreeRef.current)startListening();
+    const cap=captionRef.current;
+    if(cap)setMessages(prev=>prev.map((m,i)=>i===cap.idx?{...m,text:m.text.slice(0,Math.max(1,cap.upto)).replace(/\s+\S*$/,'')+' —',cut:true}:m));
+    setCaption(null);captionRef.current=null;
+  };
+  const startListening=()=>{
+    if(!Speech||rec.current||phaseRef.current!=='connected')return;
+    let finals='',live='',silence=null,sent=false;
+    const r=new Speech();
+    r.lang='en-GB';r.continuous=true;r.interimResults=true;r.maxAlternatives=1;
+    const flush=()=>{
+      if(sent)return;
+      const said=(finals+' '+live).replace(/\s+/g,' ').trim();
+      if(!said)return;
+      sent=true;clearTimeout(silence);
+      stopListening();
+      const intr=interruptedRef.current;interruptedRef.current=false;
+      send(said,intr);
+    };
+    r.onresult=(e)=>{
+      let f='',l='';
+      for(let i=0;i<e.results.length;i++){const t=e.results[i][0].transcript;if(e.results[i].isFinal)f+=t+' ';else l+=t;}
+      finals=f;live=l;
+      const now=(f+l).trim();
+      if(!now)return;
+      if(speakingRef.current){
+        // Talking over the customer. With headphones on, that is an interruption.
+        if(prefsRef.current.headphones&&now.split(/\s+/).length>=3)interruptCustomer();
+        else return;
+      }
+      clearIdle();
+      setAgentLive(now);
+      clearTimeout(silence);silence=setTimeout(flush,END_OF_SPEECH_MS);
+    };
+    r.onerror=(e)=>{
+      if(e.error==='not-allowed'||e.error==='service-not-allowed'||e.error==='audio-capture'){
+        setMicNote(e.error==='audio-capture'?'No microphone was found. You can type instead.':'Microphone access was refused. Allow it in the address bar, or type instead.');
+        setPrefs({handsFree:false},false);   // for this call only; the choice is not remembered
+      }else if(e.error==='network'){
+        setMicNote('Speech recognition needs the internet in this browser. Type instead, or check the connection.');
+      }
+    };
+    r.onend=()=>{
+      if(rec.current!==r)return;
+      rec.current=null;setListening(false);
+      if(!sent&&(finals+live).trim()){flush();return;}
+      // Engines end continuous sessions on their own now and then. Pick straight back up.
+      if(!sent)setTimeout(listenIfReady,150);
+    };
+    rec.current=r;setListening(true);setMicNote('');
+    try{r.start();}catch(e){rec.current=null;setListening(false);}
+  };
+
+  // ── the customer speaks
+  const customerSays=async(line,mood,ended,why)=>{
+    const run=++runId.current;
+    clearIdle();
+    const idx=msgCount.current++;
+    setMessages(prev=>[...prev,{role:'customer',text:line,delay:secondsRef.current}]);
+    const cap={idx,upto:0};captionRef.current=cap;setCaption({...cap});
+    setSpeaking(true);speakingRef.current=true;
+    if(prefsRef.current.headphones)listenIfReady();else stopListening();
+    const v=voiceRef.current||customerVoice(sessionRef.current&&sessionRef.current.voice);
+    const moodRate=mood<0.3?1.07:mood<0.45?1.03:1;
+    // Captions follow the voice: by its word boundaries where the engine reports them,
+    // otherwise by an estimate of speaking pace.
+    let boundaries=false;
+    const est=setInterval(()=>{
+      if(boundaries||run!==runId.current)return;
+      cap.upto=Math.min(line.length,cap.upto+15*0.12*moodRate*(v.rate||1));
+      setCaption({...cap});
+    },120);
+    if(canSpeak()){
+      await speakLine(line,{voice:v.voice,lang:v.lang,pitch:v.pitch,rate:(v.rate||1)*moodRate,
+        cancelled:()=>run!==runId.current,
+        onBoundary:()=>{boundaries=true;},
+        onProgress:(n)=>{if(run!==runId.current)return;cap.upto=Math.max(cap.upto,n);setCaption({...cap});}});
+    }else{
+      await new Promise(r=>setTimeout(r,Math.min(5000,700+line.length*55)));
+    }
+    clearInterval(est);
+    if(run!==runId.current)return;            // interrupted, or the call ended
+    setCaption(null);captionRef.current=null;
+    setSpeaking(false);speakingRef.current=false;
+    if(ended){
+      setStatus('The customer hung up.');
+      phone.current.hangup();
+      setTimeout(()=>{if(run===runId.current)finish('customer');},1300);
+      return;
+    }
+    armIdle(why==='holding'?18000:undefined);
+    listenIfReady();
   };
 
   // ── the call
-  const begin=async()=>{
-    if(!who)return;
-    setBusy(true);
+  const begin=async(again)=>{
+    const id=again||who;
+    if(!id)return;
+    setBusy(true);busyRef.current=true;
     try{
-      const res=await fetch(API+'/training/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({persona:who,difficulty:diff})});
+      const res=await fetch(API+'/training/start',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({persona:id,difficulty:diff,agent_first:true})});
       const s=await res.json();
       runId.current++;
       sessionRef.current=s;setSession(s);
-      setMessages([]);setAnalysis(s.analysis);setObjectives(s.objectives);setPersona(s.persona);
-      setSeconds(0);setAcw(0);setMuted(false);setHeld(false);setHints(0);setHintOpen(false);setDebrief(null);setText('');setMicNote('');
-      restarts.current=0;setLeftTab('transcript');
+      voiceRef.current=customerVoice(s.voice);
+      setMessages([]);msgCount.current=0;setAnalysis(s.analysis);setObjectives(s.objectives);setPersona(s.persona);
+      setSeconds(0);setAcw(0);setMuted(false);setHeld(false);setHints(0);setHintOpen(false);setDebrief(null);setText('');
+      setMicNote('');setStatus('');setCaption(null);setAgentLive('');setLeftTab('transcript');
       fetch(API+'/profiles/'+s.profile_id).then(r=>r.ok?r.json():null).then(setProfile).catch(()=>{});
-      setPhase('ringing');
-      ring.current.start();
+      setPhase('ringing');phaseRef.current='ringing';
+      phone.current.ring();
     }catch(e){}
-    setBusy(false);
+    setBusy(false);busyRef.current=false;
   };
   const accept=()=>{
-    ring.current.stop();
+    phone.current.stopRing();phone.current.connect();
     setPhase('connected');phaseRef.current='connected';
-    const s=sessionRef.current;
-    setTimeout(()=>customerSays(s.opening.text,s.opening.mood,false),700);
+    phone.current.line(prefsRef.current.lineSound);
+    setStatus('You\'re connected. Answer the call.');
+    // Warm up the voice engine so the customer's first words are not delayed.
+    if(canSpeak()){try{const u=new SpeechSynthesisUtterance(' ');u.volume=0;window.speechSynthesis.speak(u);}catch(e){}}
+    setTimeout(listenIfReady,250);
+    armIdle(GREET_MS);
   };
-  const reject=()=>{ring.current.stop();runId.current++;setPhase('pick');sessionRef.current=null;setSession(null);};
-  const send=async(t)=>{
+  const reject=()=>{phone.current.stopRing();runId.current++;setPhase('pick');sessionRef.current=null;setSession(null);};
+  const send=async(t,interrupted)=>{
     const s=sessionRef.current, v=(t||'').trim();
     if(!s||!v||phaseRef.current!=='connected')return;
-    stopListening();
-    setMessages(prev=>[...prev,{role:'agent',text:v,delay:secondsRef.current}]);scrollChat();
-    setText('');setBusy(true);
+    clearIdle();stopListening();
+    setStatus('');
+    msgCount.current++;
+    setMessages(prev=>[...prev,{role:'agent',text:v,delay:secondsRef.current}]);
+    setText('');setBusy(true);busyRef.current=true;
+    const asked=Date.now();
     try{
-      const res=await fetch(API+'/training/turn',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:s.id,text:v})});
+      const res=await fetch(API+'/training/turn',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({session_id:s.id,text:v,interrupted:!!interrupted})});
       if(res.ok){
         const d=await res.json();
         setAnalysis(d.analysis);setObjectives(d.objectives);setPersona(d.persona);
-        setBusy(false);
-        // A beat before the customer answers, as a person would take.
-        await new Promise(r=>setTimeout(r,500));
-        customerSays(d.customer.text,d.customer.mood,d.ended);
+        // People take a breath before they answer: shorter when upset, longer for a long answer.
+        const words=(d.customer.text||'').split(/\s+/).length;
+        const gap=(d.customer.mood<0.35?160:260)+Math.min(420,words*9)-(Date.now()-asked);
+        if(gap>0)await new Promise(r=>setTimeout(r,gap));
+        setBusy(false);busyRef.current=false;
+        if(phaseRef.current==='connected')customerSays(d.customer.text,d.customer.mood,d.ended,d.customer.why);
         return;
       }
     }catch(e){}
-    setBusy(false);
-    if(handsFreeRef.current)startListening();
+    setBusy(false);busyRef.current=false;
+    armIdle();listenIfReady();
   };
   const finish=async(by)=>{
     const s=sessionRef.current;
     if(!s||phaseRef.current==='debrief')return;
-    runId.current++;stopListening();stopSpeaking();ring.current.stop();
-    setSpeaking(false);speakingRef.current=false;
+    runId.current++;clearIdle();stopListening();stopSpeaking();
+    phone.current.stopRing();phone.current.line(false);
+    if(by==='agent')phone.current.hangup();
+    setSpeaking(false);speakingRef.current=false;setCaption(null);captionRef.current=null;
     setPhase('debrief');phaseRef.current='debrief';
     try{
-      const res=await fetch(API+'/training/end',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:s.id,hints_used:hintsRef.current,ended_by:by})});
+      const res=await fetch(API+'/training/end',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({session_id:s.id,hints_used:hintsRef.current,ended_by:by})});
       const d=await res.json();
       setDebrief(d);
-      const a={id:who,name:s.customer.name,difficulty:s.difficulty.id,score:d.quality.overall,band:d.quality.band,
-        compliance:d.quality.compliance,done:d.done,total:d.objectives.length,at:Date.now()};
-      saveAttempt(a);setAttempts(loadAttempts());
+      saveAttempt({id:s.contact&&s.voice?s.voice.key:who,name:s.customer.name,difficulty:s.difficulty.id,score:d.quality.overall,
+        band:d.quality.band,compliance:d.quality.compliance,done:d.done,total:d.objectives.length,at:Date.now()});
+      setAttempts(loadAttempts());
     }catch(e){}
   };
-  const closeOut=()=>{runId.current++;setPhase('pick');sessionRef.current=null;setSession(null);setDebrief(null);};
+  const closeOut=()=>{runId.current++;clearIdle();setPhase('pick');phaseRef.current='pick';sessionRef.current=null;setSession(null);setDebrief(null);};
   const again=(harder)=>{
-    if(harder){const order=['steady','testing','tough'];const i=order.indexOf(diff);setDiff(order[Math.min(2,i+1)]);}
-    closeOut();setTimeout(begin,80);
+    const id=session&&session.voice?session.voice.key:who;
+    if(harder){const order=['steady','testing','tough'];setDiff(order[Math.min(2,order.indexOf(diff)+1)]);}
+    closeOut();setTimeout(()=>begin(id),120);
   };
   const toggleMic=()=>{if(listening)stopListening();else startListening();};
   const openHint=()=>{if(!hintOpen)setHints(h=>h+1);setHintOpen(o=>!o);};
@@ -5783,8 +6029,9 @@ function TrainingPage({workspace,aiEnabled,onBusy}){
   if(phase==='pick'){
     return(
       <div className="flex-1 overflow-y-auto p-5">
-        <TrainingPick options={options} who={who} setWho={setWho} diff={diff} setDiff={setDiff} onStart={begin}
-          busy={busy} attempts={attempts} speech={!!Speech} voice={canSpeak()} handsFree={handsFree} setHandsFree={setHandsFree} aiEnabled={aiEnabled}/>
+        <TrainingPick options={options} who={who} setWho={setWho} diff={diff} setDiff={setDiff} onStart={()=>begin()}
+          busy={busy} attempts={attempts} speech={!!Speech} voice={canSpeak()} voicesReady={voicesReady}
+          prefs={prefs} setPrefs={setPrefs} aiEnabled={aiEnabled}/>
       </div>
     );
   }
@@ -5792,30 +6039,33 @@ function TrainingPage({workspace,aiEnabled,onBusy}){
   const s=session;
   const contact=s?s.contact:null;
   const agentState=phase==='ringing'?'ringing':phase==='connected'?'connected':'acw';
-  const mood=persona?persona.mood:(s?s.opening.mood:0.5);
-  const moodLabel=persona?persona.mood_label:(s?s.opening.mood_label:'neutral');
+  const mood=persona?persona.mood:0.5;
+  const moodLabel=persona?persona.mood_label:'neutral';
   const routed=analysis?analysis.routed_to_engine:false;
   const leadScore=analysis?analysis.lead_score:0;
   const scoreTone=leadScore>=80?'green':leadScore>=50?'amber':'blue';
+  const v=voiceRef.current;
 
   return(
     <div className="flex-1 flex min-h-0">
       <CCP agentState={agentState} contact={contact} scenario={s} seconds={seconds} acwSeconds={acw}
         onAccept={accept} onReject={reject} onEnd={()=>finish('agent')} onClose={closeOut}
         muted={muted} setMuted={setMuted} held={held} setHeld={setHeld}
-        ringNote="Press Accept when you are ready. The customer speaks first."/>
+        ringNote="Press Accept, then answer the call as you would a real one."/>
       <main className="flex-1 min-w-0 min-h-0 overflow-hidden flex flex-col p-3.5 fade-in">
-        {/* Header: who, what the engine decided, how they feel, and the training controls */}
         <div className="card px-4 py-2.5 mb-2.5 flex items-center gap-4 flex-wrap shrink-0">
           <div className="flex items-center gap-2.5 pr-4" style={{borderRight:'1px solid var(--border)'}}>
-            <div className="w-9 h-9 rounded-full flex items-center justify-center" style={{background:SOFT.purple,color:COLORS.purple}}><Icon name="headset" size={17}/></div>
+            <div className="w-9 h-9 rounded-full flex items-center justify-center relative" style={{background:SOFT.purple,color:COLORS.purple}}>
+              <Icon name="headset" size={17}/>
+              {speaking&&<span className="absolute inset-0 rounded-full ring-pulse"></span>}
+            </div>
             <div className="leading-tight">
               <div className="text-[14px] font-bold t-primary">{s.customer.name}</div>
               <div className="text-[11px] t-muted">{s.customer.role}</div>
             </div>
           </div>
-          {[['Plan',s.customer.tier],['Value',s.customer.account_value],['Tenure',s.customer.tenure]].map(([l,v])=>(
-            <div key={l} className="leading-tight"><div className="text-[10px] t-muted uppercase tracking-wide font-bold">{l}</div><div className="text-[12.5px] font-semibold t-primary">{v}</div></div>
+          {[['Plan',s.customer.tier],['Value',s.customer.account_value],['Tenure',s.customer.tenure]].map(([l,val])=>(
+            <div key={l} className="leading-tight"><div className="text-[10px] t-muted uppercase tracking-wide font-bold">{l}</div><div className="text-[12.5px] font-semibold t-primary">{val}</div></div>
           ))}
           <div className="pl-4 leading-tight" style={{borderLeft:'1px solid var(--border)'}}>
             <div className="text-[10px] t-muted uppercase tracking-wide font-bold">The engine decided</div>
@@ -5825,31 +6075,29 @@ function TrainingPage({workspace,aiEnabled,onBusy}){
               <span className="text-[10.5px] t-muted">{likely(s.treatment.propensity)} likely</span>
             </div>
           </div>
-          <div className="pl-4 leading-tight min-w-[150px]" style={{borderLeft:'1px solid var(--border)'}}>
-            <div className="text-[10px] t-muted uppercase tracking-wide font-bold">How they feel</div>
-            <div className="flex items-center gap-2 mt-1">
-              <div className="h-1.5 w-20 rounded-full overflow-hidden" style={{background:'var(--surface-3)'}}>
-                <div className="h-full" style={{width:`${Math.round(mood*100)}%`,background:c(MOOD_TONE(mood)),transition:'width .6s cubic-bezier(.16,1,.3,1),background .4s'}}></div>
+          {phase!=='ringing'&&(
+            <div className="pl-4 leading-tight min-w-[150px]" style={{borderLeft:'1px solid var(--border)'}}>
+              <div className="text-[10px] t-muted uppercase tracking-wide font-bold">How they feel</div>
+              <div className="flex items-center gap-2 mt-1">
+                <div className="h-1.5 w-20 rounded-full overflow-hidden" style={{background:'var(--surface-3)'}}>
+                  <div className="h-full" style={{width:`${Math.round(mood*100)}%`,background:c(MOOD_TONE(mood)),transition:'width .6s cubic-bezier(.16,1,.3,1),background .4s'}}></div>
+                </div>
+                <span className="text-[11.5px] font-bold capitalize" style={{color:c(MOOD_TONE(mood))}}>{moodLabel}</span>
               </div>
-              <span className="text-[11.5px] font-bold capitalize" style={{color:c(MOOD_TONE(mood))}}>{moodLabel}</span>
             </div>
-          </div>
-          <div className="ml-auto flex items-center gap-2">
+          )}
+          <div className="ml-auto flex items-center gap-2 flex-wrap justify-end">
             <Pill tone={DIFF_TONE[s.difficulty.id]||'neutral'} dot>Practice · {s.difficulty.label}</Pill>
-            {speaking&&<span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10.5px] font-bold uppercase tracking-wider" style={{background:SOFT.accent,color:COLORS.accent}}><Icon name="volume" size={12}/>Customer speaking</span>}
-            {listening&&<span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10.5px] font-bold uppercase tracking-wider" style={{background:SOFT.red,color:COLORS.red}}><span className="live-dot"></span>Listening</span>}
-            {phase==='connected'&&Speech&&(
-              <button onClick={()=>{setHandsFree(v=>{const n=!v;if(!n)stopListening();else if(!speakingRef.current&&!busy)setTimeout(startListening,50);return n;});}}
-                title="Hands-free: the microphone opens by itself after the customer speaks" className="text-[12px] font-semibold px-2.5 py-1.5 rounded"
-                style={{background:handsFree?SOFT.accent:'var(--surface-3)',color:handsFree?COLORS.accent:'var(--text-2)'}}>
-                <span className="inline-flex items-center gap-1.5"><Icon name="mic" size={13}/>{handsFree?'Hands-free on':'Hands-free off'}</span>
-              </button>
-            )}
+            {speaking&&<span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10.5px] font-bold uppercase tracking-wider" style={{background:SOFT.accent,color:COLORS.accent}}><Icon name="volume" size={12}/>{s.customer.name.split(' ')[0]} speaking</span>}
+            {listening&&!speaking&&<span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10.5px] font-bold uppercase tracking-wider" style={{background:SOFT.red,color:COLORS.red}}><span className="live-dot"></span>Listening</span>}
             {phase==='connected'&&(
-              <button onClick={openHint} className="text-[12px] font-semibold px-2.5 py-1.5 rounded"
-                style={{background:hintOpen?SOFT.amber:'var(--surface-3)',color:hintOpen?COLORS.amber:'var(--text-2)'}}>
-                <span className="inline-flex items-center gap-1.5"><Icon name="bulb" size={13}/>{hintOpen?'Hide hint':'Hint'}{hints>0&&<span className="mono text-[10px]">·{hints}</span>}</span>
-              </button>
+              <>
+                {Speech&&<TogglePill on={prefs.handsFree} onClick={()=>{const n=!prefs.handsFree;setPrefs({handsFree:n});if(!n)stopListening();else if(!speakingRef.current&&!busyRef.current)setTimeout(listenIfReady,50);}}
+                  icon="mic" label={prefs.handsFree?'Hands-free':'Push to talk'} title="Hands-free: the microphone stays open and sends when you pause."/>}
+                {Speech&&<TogglePill on={prefs.headphones} onClick={()=>setPrefs({headphones:!prefs.headphones})} icon="headset" label="Headphones"
+                  title="With headphones on, you can talk over the customer to interrupt — as on a real call. Without them, your speakers would interrupt the customer."/>}
+                <TogglePill on={hintOpen} onClick={openHint} icon="bulb" label={'Hint'+(hints>0?' · '+hints:'')} tone="amber"/>
+              </>
             )}
           </div>
         </div>
@@ -5859,15 +6107,15 @@ function TrainingPage({workspace,aiEnabled,onBusy}){
             <div className="text-center max-w-md">
               <div className="mb-4 shake flex justify-center" style={{color:COLORS.accent}}><Icon name="phone" size={46} stroke={1.6}/></div>
               <h2 className="text-[24px] font-extrabold t-primary mb-1">Incoming call</h2>
-              <p className="text-[14.5px] t-secondary mb-5">Read the screen pop, then press <b>Accept</b> on the softphone. The customer will speak first — answer them out loud.</p>
+              <p className="text-[14.5px] t-secondary mb-5">Read the screen pop, press <b>Accept</b>, then answer as you would on a real call — the customer is waiting for you to speak first.</p>
               <div className="card p-5 text-left">
                 <div className="flex items-center justify-between mb-3 pb-3 border-b divider">
                   <div><div className="text-[15px] font-bold t-primary">{s.customer.name}</div><div className="text-[12px] t-muted">{s.customer.role}</div></div>
                   <Pill tone={contact.attributes&&contact.attributes.authStatus==='VERIFIED'?'accent':'amber'} dot>{contact.attributes&&contact.attributes.authStatus==='VERIFIED'?'Verified':'Verify first'}</Pill>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
-                  {[['Queue',contact.queue],['Reason given',s.title.replace('Practice — ','')],['IVR path',contact.ivr_path],['Mood on arrival',s.opening.mood_label]].map(([l,v])=>(
-                    <div key={l}><div className="text-[10px] t-muted uppercase tracking-wide font-bold mb-0.5">{l}</div><div className="text-[11.5px] t-secondary break-words capitalize">{v}</div></div>
+                  {[['Queue',contact.queue],['Reason given',s.title.replace('Practice — ','')],['IVR path',contact.ivr_path],['Mood on arrival',s.opening.mood_label]].map(([l,val])=>(
+                    <div key={l}><div className="text-[10px] t-muted uppercase tracking-wide font-bold mb-0.5">{l}</div><div className="text-[11.5px] t-secondary break-words capitalize">{val}</div></div>
                   ))}
                 </div>
                 <div className="mt-3 pt-3 border-t divider text-[12px] t-secondary"><b className="t-primary">Your focus: </b>{s.focus}</div>
@@ -5889,12 +6137,22 @@ function TrainingPage({workspace,aiEnabled,onBusy}){
               {leftTab==='transcript'?(
                 <>
                   <div ref={chatRef} className="flex-1 overflow-y-auto px-3 py-3" style={{background:'var(--surface-2)'}}>
-                    {messages.length===0&&<EmptyState icon="phone" title="Connecting…" body="The customer is about to speak." compact/>}
-                    {messages.map((m,i)=><Utterance key={i} msg={m} idx={i} sentiment={analysis&&analysis.sentiments?analysis.sentiments[Math.min(i,analysis.sentiments.length-1)]:mood}/>)}
-                    {busy&&<TypingRow who="customer"/>}
+                    {messages.length===0&&!agentLive&&<EmptyState icon="phone" title="The line is open" body="The customer is waiting. Greet them — your words appear here as you speak." compact/>}
+                    {messages.map((m,i)=>{
+                      const live=caption&&caption.idx===i;
+                      const shown=live?{...m,text:(m.text.slice(0,Math.max(0,Math.round(caption.upto))).trim()||'…')+(caption.upto<m.text.length?' …':'')}:m;
+                      return <Utterance key={i} msg={shown} idx={i} sentiment={analysis&&analysis.sentiments&&analysis.sentiments.length?analysis.sentiments[Math.min(i,analysis.sentiments.length-1)]:mood}/>;
+                    })}
+                    {agentLive&&(
+                      <div className="mb-3 fade-in" style={{opacity:.75}}>
+                        <div className="flex items-center gap-2 mb-1"><span className="text-[11px] font-bold" style={{color:'var(--text-2)'}}>You</span><span className="live-dot"></span></div>
+                        <div className="px-3 py-2 text-[13.5px] leading-relaxed rounded-md" style={{background:'var(--accent-soft)',border:'1px dashed #9cc1f5',color:'var(--text)'}}>{agentLive}</div>
+                      </div>
+                    )}
                   </div>
-                  <TrainingComposer text={text} setText={setText} onSend={send} listening={listening} interim={interim} speaking={speaking}
-                    busy={busy} handsFree={handsFree} speech={!!Speech} onMic={toggleMic} note={micNote}/>
+                  <TrainingComposer text={text} setText={(x)=>{setText(x);if(x)armIdle(20000);}} onSend={(x)=>send(x,false)} listening={listening} live={agentLive} speaking={speaking}
+                    busy={busy} handsFree={prefs.handsFree} speech={!!Speech} onMic={toggleMic} note={micNote} status={status}
+                    who={s.customer.name.split(' ')[0]} muted={muted} held={held}/>
                 </>
               ):<ProfilePanel profile={profile}/>}
             </section>
@@ -5945,7 +6203,7 @@ function TrainingPage({workspace,aiEnabled,onBusy}){
                         <div className="mt-2.5">
                           <div className="text-[10px] t-muted uppercase tracking-wide font-bold mb-1">You could say</div>
                           {analysis.suggested_replies.map((r,i)=>(
-                            <button key={i} onClick={()=>send(r)} disabled={busy||speaking}
+                            <button key={i} onClick={()=>send(r,false)} disabled={busy||speaking}
                               className="w-full text-left text-[11.5px] leading-snug px-2 py-1.5 rounded mb-1" style={{background:SOFT.accent,color:'#0b4ea8',border:'1px solid #cfe0fb'}}>{r}</button>
                           ))}
                         </div>
@@ -5958,7 +6216,11 @@ function TrainingPage({workspace,aiEnabled,onBusy}){
                 </div>
               </div>
               {analysis&&analysis.lead_summary&&<LeadCard summary={analysis.lead_summary}/>}
-              {analysis&&analysis.resolution_summary&&messages.length>2&&<ResolutionCard resolution={analysis.resolution_summary}/>}
+              {v&&(
+                <div className="text-[10.5px] t-muted px-1 leading-snug">
+                  {s.customer.name.split(' ')[0]}'s voice: {v.name||'the browser default'}{v.name&&!v.matched&&v.gender?` — no ${v.gender} voice on this machine, so it is pitched ${v.gender==='female'?'up':'down'}`:''}.
+                </div>
+              )}
             </section>
           </div>
         )}
@@ -5971,54 +6233,75 @@ function TrainingPage({workspace,aiEnabled,onBusy}){
   );
 }
 
-// ─── What the trainee says: spoken, or typed ───
-function TrainingComposer({text,setText,onSend,listening,interim,speaking,busy,handsFree,speech,onMic,note}){
-  const status=speaking?'The customer is speaking — wait for them to finish.'
-    :busy?'Thinking about what you said…'
-    :listening?(interim?`Hearing: “${interim}”`:'Listening… speak now.')
-    :handsFree&&speech?'Your turn. The microphone opens by itself.'
+function TogglePill({on,onClick,icon,label,title,tone='accent'}){
+  return(
+    <button onClick={onClick} title={title} aria-pressed={on?'true':'false'} className="text-[12px] font-semibold px-2.5 py-1.5 rounded"
+      style={{background:on?cs(tone):'var(--surface-3)',color:on?c(tone):'var(--text-2)'}}>
+      <span className="inline-flex items-center gap-1.5"><Icon name={icon} size={13}/>{label}</span>
+    </button>
+  );
+}
+
+// ─── What the agent says: spoken, or typed ───
+function TrainingComposer({text,setText,onSend,listening,live,speaking,busy,handsFree,speech,onMic,note,status,who,muted,held}){
+  const line=held?`${who} is on hold.`
+    :muted?`You are muted — ${who} cannot hear you.`
+    :speaking?`${who} is speaking.`
+    :busy?'…'
+    :status?status
+    :listening?(live?'Pause when you have finished — it sends by itself.':'Listening. Speak whenever you are ready.')
+    :handsFree&&speech?'The microphone will open in a moment.'
     :speech?'Press the microphone to speak, or type.':'Type what you would say.';
   return(
     <div className="shrink-0 p-2.5" style={{borderTop:'1px solid var(--border)',background:'var(--surface)'}}>
-      <div className="flex items-center gap-2 mb-1.5 text-[11px]" style={{color:listening?COLORS.red:'var(--text-3)'}}>
-        {listening&&<span className="live-dot"></span>}
-        <span className="truncate">{status}</span>
+      <div className="flex items-center gap-2 mb-1.5 text-[11px]" style={{color:listening&&!speaking?COLORS.red:'var(--text-3)'}}>
+        {listening&&!speaking&&<span className="live-dot"></span>}
+        <span className="truncate">{line}</span>
       </div>
       {note&&<div className="text-[11px] mb-1.5 px-2 py-1 rounded" style={{background:SOFT.amber,color:COLORS.amber}}>{note}</div>}
       <div className="flex items-end gap-1.5">
-        <textarea value={text} onChange={e=>setText(e.target.value)} rows={2} disabled={speaking}
+        <textarea value={text} onChange={e=>setText(e.target.value)} rows={2}
           onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();onSend(text);}}}
-          placeholder="What you say to the customer"
+          placeholder="Or type what you would say"
           className="flex-1 text-[13px] leading-snug px-2.5 py-2 rounded-md resize-none"
-          style={{border:'1px solid var(--border-strong)',background:'var(--surface-2)',color:'var(--text)',fontFamily:'inherit',outline:'none',opacity:speaking?0.6:1}}/>
+          style={{border:'1px solid var(--border-strong)',background:'var(--surface-2)',color:'var(--text)',fontFamily:'inherit',outline:'none'}}/>
         {speech&&(
-          <button onClick={onMic} disabled={speaking} title="Push to talk" aria-label={listening?'Stop listening':'Speak'}
-            className={`w-9 h-9 rounded-md text-[14px] shrink-0 ${listening?'ring-pulse':''}`}
+          <button onClick={onMic} title={listening?'Stop listening':'Speak'} aria-label={listening?'Stop listening':'Speak'}
+            className={`w-9 h-9 rounded-md text-[14px] shrink-0 ${listening&&!speaking?'ring-pulse':''}`}
             style={{background:listening?SOFT.red:'var(--surface-3)',color:listening?COLORS.red:'var(--text-2)'}}>
             {listening?'■':<Icon name="mic" size={16}/>}
           </button>
         )}
-        <button onClick={()=>onSend(text)} disabled={!text.trim()||speaking||busy}
-          className="h-9 px-3.5 rounded-md text-[13px] font-bold text-white shrink-0" style={{background:COLORS.accent,opacity:text.trim()&&!speaking&&!busy?1:0.45}}>Say it</button>
+        <button onClick={()=>onSend(text)} disabled={!text.trim()||busy}
+          className="h-9 px-3.5 rounded-md text-[13px] font-bold text-white shrink-0" style={{background:COLORS.accent,opacity:text.trim()&&!busy?1:0.45}}>Say it</button>
       </div>
     </div>
   );
 }
 
 // ─── Choosing a customer ───
-function TrainingPick({options,who,setWho,diff,setDiff,onStart,busy,attempts,speech,voice,handsFree,setHandsFree,aiEnabled}){
+function TrainingPick({options,who,setWho,diff,setDiff,onStart,busy,attempts,speech,voice,voicesReady,prefs,setPrefs,aiEnabled}){
   const best=(id)=>{const a=attempts.filter(x=>x.id===id);return a.length?Math.max(...a.map(x=>x.score)):null;};
-  const sayHello=()=>{if(canSpeak())say('Hi, thanks for taking my call. My storage keeps telling me it is full.','en-GB','customer',1.0);};
+  const person=options&&who?options.customers.find(p=>p.id===who):null;
+  const pv=person&&voice?customerVoice({...person.voice,key:person.id}):null;
+  const[previewing,setPreviewing]=useState(false);
+  const preview=async()=>{
+    if(!pv||!person)return;
+    stopSpeaking();setPreviewing(true);
+    await speakLine(person.opening,{voice:pv.voice,lang:pv.lang,pitch:pv.pitch,rate:pv.rate});
+    setPreviewing(false);
+  };
+  useEffect(()=>()=>stopSpeaking(),[]);
   return(
     <div className="max-w-6xl mx-auto">
       <PageHead kicker="For agents" title="Practice a call"
-        sub="A mock call, in audio. The engine plays the customer; you are the agent. Speak as you would on a real call — the customer answers back, and everything the workspace does happens as you go. Then you get a debrief."
+        sub="A mock call, in audio. The engine plays the customer; you are the agent. Answer the call, talk as you would on a real one — the customer talks back in their own voice, and everything the workspace does happens as you go. Then you get a debrief."
         tag={<Pill tone="purple" dot>Training mode</Pill>}/>
 
       <div className="grid grid-cols-3 gap-3 mb-4">
         {[['1','Pick a customer','Each one teaches one thing: holding back, solving before offering, verifying first.'],
-          ['2','Answer, and speak','The customer speaks first. Reply out loud — the microphone opens by itself — or type.'],
-          ['3','Read the debrief','Quality score with evidence, what the customer felt, and the one thing to work on next.']].map(([n,t,b])=>(
+          ['2','Answer, and talk','You greet them. They answer, ask, push back — and notice silence, pressure and interruptions.'],
+          ['3','Read the debrief','Quality score with evidence, how the customer felt, and the one thing to work on next.']].map(([n,t,b])=>(
           <div key={n} className="card p-4 flex gap-3">
             <div className="w-8 h-8 rounded-full flex items-center justify-center text-[13px] font-extrabold text-white shrink-0" style={{background:COLORS.purple}}>{n}</div>
             <div><div className="text-[14px] font-bold t-primary">{t}</div><div className="text-[12.5px] t-secondary mt-0.5 leading-snug">{b}</div></div>
@@ -6076,17 +6359,25 @@ function TrainingPick({options,who,setWho,diff,setDiff,onStart,busy,attempts,spe
           <div className="card p-4">
             <div className="text-[10px] t-muted uppercase tracking-wide font-bold mb-2">Sound check</div>
             <div className="space-y-1.5 text-[12.5px]">
-              <div className="flex items-center gap-2"><span className="w-2 h-2 rounded-full" style={{background:voice?COLORS.green:COLORS.amber}}></span>
-                <span className="t-secondary">{voice?'The customer will speak through your speakers.':'No speech voices here — the customer\'s words appear as text.'}</span></div>
-              <div className="flex items-center gap-2"><span className="w-2 h-2 rounded-full" style={{background:speech?COLORS.green:COLORS.amber}}></span>
-                <span className="t-secondary">{speech?'Your microphone will be used when you answer.':'This browser cannot listen — you will type your replies.'}</span></div>
-              {aiEnabled&&<div className="flex items-center gap-2"><span className="w-2 h-2 rounded-full" style={{background:COLORS.purple}}></span><span className="t-secondary">Claude voices the customer's replies.</span></div>}
+              <div className="flex items-start gap-2"><span className="w-2 h-2 rounded-full mt-1.5 shrink-0" style={{background:voice&&voicesReady?COLORS.green:COLORS.amber}}></span>
+                <span className="t-secondary">{!voice?'No speech voices here — the customer\'s words appear as text.'
+                  :!person?'Choose a customer to hear their voice.'
+                  :pv&&pv.name?<>{person.first_name} will sound like <b className="t-primary">{pv.name.replace(/^Microsoft |^Google /,'').replace(/ - .*$/,'')}</b>{!pv.matched&&pv.gender?<> — no {pv.gender} voice on this machine, so it is pitched {pv.gender==='female'?'up':'down'}</>:''}.</>
+                  :'Loading voices…'}</span></div>
+              <div className="flex items-start gap-2"><span className="w-2 h-2 rounded-full mt-1.5 shrink-0" style={{background:speech?COLORS.green:COLORS.amber}}></span>
+                <span className="t-secondary">{speech?'You answer out loud. Chrome or Edge recommended.':'This browser cannot listen — you will type your replies.'}</span></div>
+              {aiEnabled&&<div className="flex items-start gap-2"><span className="w-2 h-2 rounded-full mt-1.5 shrink-0" style={{background:COLORS.purple}}></span><span className="t-secondary">Claude rewords the customer's replies to answer your exact words.</span></div>}
             </div>
-            <div className="flex items-center gap-2 mt-3">
-              {voice&&<button onClick={sayHello} className="text-[12px] font-semibold px-2.5 py-1.5 rounded" style={{background:SOFT.accent,color:COLORS.accent}}>Hear the customer</button>}
-              {speech&&<button onClick={()=>setHandsFree(v=>!v)} className="text-[12px] font-semibold px-2.5 py-1.5 rounded" style={{background:handsFree?SOFT.accent:'var(--surface-3)',color:handsFree?COLORS.accent:'var(--text-2)'}}>{handsFree?'Hands-free on':'Hands-free off'}</button>}
+            <div className="flex items-center gap-1.5 mt-3 flex-wrap">
+              {voice&&person&&<button onClick={preview} disabled={previewing} className="text-[12px] font-semibold px-2.5 py-1.5 rounded" style={{background:SOFT.accent,color:COLORS.accent}}>
+                <span className="inline-flex items-center gap-1.5"><Icon name="volume" size={13}/>{previewing?'Playing…':'Hear '+person.first_name}</span></button>}
+              {speech&&<TogglePill on={prefs.handsFree} onClick={()=>setPrefs({handsFree:!prefs.handsFree})} icon="mic" label={prefs.handsFree?'Hands-free':'Push to talk'}
+                title="Hands-free: the microphone stays open and sends when you pause."/>}
+              {speech&&<TogglePill on={prefs.headphones} onClick={()=>setPrefs({headphones:!prefs.headphones})} icon="headset" label="Headphones"
+                title="With headphones on, you can talk over the customer to interrupt them."/>}
+              <TogglePill on={prefs.lineSound} onClick={()=>setPrefs({lineSound:!prefs.lineSound})} icon="phone" label="Line sound" title="A faint phone-line hiss during the call."/>
             </div>
-            <p className="text-[10.5px] t-muted mt-2.5 leading-snug">The voice is synthesised in the browser. The microphone uses the browser's speech service, which may send audio to the browser vendor. Nothing is recorded here.</p>
+            <p className="text-[10.5px] t-muted mt-2.5 leading-snug">Voices are the ones installed on this machine; Edge's natural voices sound the most real. The microphone uses the browser's speech service, which may send audio to the browser vendor. Nothing is recorded here.</p>
           </div>
 
           <button onClick={onStart} disabled={!who||busy} className="w-full py-3 rounded-md text-[15px] font-bold text-white"
@@ -6138,6 +6429,9 @@ function TrainingDebrief({d,s,messages,onAgain,onHarder,onPick,canHarder}){
               </div>
             </div>
           </div>
+          {d.customer.ended_by==='customer'&&d.flags.includes('customer_hung_up')&&(
+            <div className="p-2.5 rounded mb-3" style={{background:SOFT.red}}><p className="text-[12px] font-bold leading-snug" style={{color:COLORS.red}}>The customer hung up on you.</p></div>
+          )}
           <div className="p-2.5 rounded mb-3" style={{background:cs(tone)}}><p className="text-[12px] font-semibold leading-snug" style={{color:c(tone)}}>{q.coaching_note}</p></div>
           <div className="text-[10px] t-muted uppercase tracking-wide font-bold mb-1.5">Work on next</div>
           <ol className="space-y-1.5 mb-3">

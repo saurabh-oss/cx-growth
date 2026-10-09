@@ -40,8 +40,8 @@ from pathlib import Path
 import brand
 
 # The tenant namespace: where this demo's own fields live inside a profile or an event.
-TENANT = "_icxdemo"
-DB_PATH = Path(__file__).parent / "icx.db"
+TENANT = "_cxdemo"
+DB_PATH = Path(__file__).parent / "cx.db"
 _NS = brand.vendor_api().get("channel_ns", "https://ns.example.com/channel-types")
 VOICE = _NS + "/voice"
 CHAT = _NS + "/chat"
@@ -361,8 +361,8 @@ class UnomiPlatform(CustomerPlatform):
     of the OASIS Customer Data Platform specification. Start it with platform/docker-compose.yml."""
     key = "unomi"
     label = "Apache Unomi"
-    EVENT_TYPE = "icxActivityEvent"
-    SCOPE = "icx"
+    EVENT_TYPE = "cxActivityEvent"
+    SCOPE = "cx"
 
     def __init__(self, base=None, user=None, password=None, timeout=4.0):
         # 127.0.0.1, not localhost: on Windows "localhost" tries IPv6 first and every call
@@ -401,11 +401,11 @@ class UnomiPlatform(CustomerPlatform):
         if self._ready:
             return
         self._call("POST", "/cxs/scopes", {"itemId": self.SCOPE, "itemType": "scope",
-                                           "metadata": {"id": self.SCOPE, "name": "ICX contact centre"}})
+                                           "metadata": {"id": self.SCOPE, "name": "CX contact centre"}})
         self._call("POST", "/cxs/jsonSchema", {
             "$id": "https://unomi.apache.org/schemas/json/events/%s/1-0-0" % self.EVENT_TYPE,
             "$schema": "https://json-schema.org/draft/2019-09/schema",
-            "self": {"vendor": "com.icx.growth", "target": "events", "name": self.EVENT_TYPE,
+            "self": {"vendor": "com.cx.growth", "target": "events", "name": self.EVENT_TYPE,
                      "format": "jsonschema", "version": "1-0-0"},
             "title": "An experience event carried on a Unomi event", "type": "object",
             "allOf": [{"$ref": "https://unomi.apache.org/schemas/json/event/1-0-0"}],
@@ -471,7 +471,7 @@ class UnomiPlatform(CustomerPlatform):
                 "requireSegments": True}
         if events:
             body["events"] = events
-        return self._call("POST", "/cxs/context.json?sessionId=" + (session or "icx-" + profile_id), body,
+        return self._call("POST", "/cxs/context.json?sessionId=" + (session or "cx-" + profile_id), body,
                           auth=False, headers={"Cookie": "context-profile-id=" + profile_id})
 
     def record_event(self, profile_id, event):
@@ -571,7 +571,7 @@ class VendorPlatform(CustomerPlatform):
         c = self.cfg
         ref = {"id": schema, "contentType": c["content_type"]}
         return {"header": {"schemaRef": ref, c["org_field"]: self.env.get("XP_ORG_ID", "{ORG_ID}"),
-                           "datasetId": dataset, "source": {"name": "ICX Growth Engine"}},
+                           "datasetId": dataset, "source": {"name": "CX Growth Engine"}},
                 "body": {c["meta_field"]: {"schemaRef": ref}, c["entity_field"]: entity}}
 
     def request_for(self, op, profile_id="{profileId}", doc=None):

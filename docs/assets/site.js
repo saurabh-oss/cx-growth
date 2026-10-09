@@ -882,13 +882,13 @@
 
   // ── run it ─────────────────────────────────────────────────────────────
   (function () {
-    var REPO = 'https://github.com/saurabh-oss/icx-growth.git';
+    var REPO = 'https://github.com/saurabh-oss/cx-growth.git';
     var S = {
-      win: ['git clone ' + REPO + '\ncd icx-growth\nrun.bat', 'Installs four Python packages, starts the server and opens http://localhost:8000.'],
-      nix: ['git clone ' + REPO + '\ncd icx-growth\n./run.sh', 'Installs four Python packages, starts the server and opens http://localhost:8000.'],
+      win: ['git clone ' + REPO + '\ncd cx-growth\nrun.bat', 'Installs four Python packages, starts the server and opens http://localhost:8000.'],
+      nix: ['git clone ' + REPO + '\ncd cx-growth\n./run.sh', 'Installs four Python packages, starts the server and opens http://localhost:8000.'],
       unomi: ['cd platform && docker compose up -d && cd ..\nexport CUSTOMER_PLATFORM=unomi     # Windows: set CUSTOMER_PLATFORM=unomi\npython backend/main.py',
         'Needs Docker. The first start pulls about 1.5 GB. If Unomi is not reachable the app says so and uses the built-in store.'],
-      test: ['python -m unittest discover -s tests -v', '43 tests, about five seconds, no server and no network. With Unomi running, the platform tests run against it as well.']
+      test: ['python -m unittest discover -s tests -v', '46 tests, about five seconds, no server and no network. With Unomi running, the platform tests run against it as well.']
     };
     var k = 'win';
     if (/Mac|Linux|X11/.test(navigator.platform || '') && !/Win/.test(navigator.platform || '')) k = 'nix';

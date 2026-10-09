@@ -426,6 +426,86 @@ class Training(unittest.TestCase):
         self.assertEqual(whys[:2], ["stalled", "stalled"])
         self.assertEqual(whys[2], "advanced")
 
+    def test_the_customer_answers_what_is_asked_and_waits_when_asked_to_hold(self):
+        import trainer
+        p, _ = self.persona("priya-individual-to-teams")
+        r = p.respond("Can I take your full name and your date of birth, please?")
+        self.assertEqual(r["why"], "answered")
+        self.assertIn("Priya Raman", r["text"])
+        self.assertIn("1986", r["text"])
+        self.assertEqual(p.beat, 0, "answering a question is not the story moving on")
+        r = p.respond("Bear with me one moment.")
+        self.assertEqual(r["why"], "holding")
+        r = p.respond("Roughly how many people are using it?")
+        self.assertIn("Three of us", r["text"])
+        # A topic mentioned in a statement is not a question.
+        self.assertEqual(trainer.ask_topics("I'll send you a reference by email."), [])
+        self.assertEqual(trainer.ask_topics("What's the email on the account?"), ["email"])
+        self.assertEqual(trainer.ask_topics("Have you changed your email recently?"), [])
+        self.assertEqual(trainer.ask_topics("What do you use it for, mostly?"), ["work"])
+        e, _ = self.persona("elena-double-charge")
+        self.assertIn("2nd", e.respond("I'm sorry. When did the charges come out?")["text"])
+        # Naming the matched product, with what it costs, is an offer — and a testing customer objects once.
+        q, _ = self.persona("priya-individual-to-teams", "testing")
+        for line in ["Hi Priya, I can see sign-ins from three devices. An individual licence covers one person.",
+                     "That explains the sign-outs, and it's worth setting up properly."]:
+            q.respond(line)
+        r = q.respond("There's Studio Cloud for teams, which gives each of you a licence. It's $42 a seat a month.")
+        self.assertEqual(r["why"], "objection")
+        self.assertNotIn("How much", r["text"], "the price was already given")
+
+    def test_the_agent_answers_first_and_silence_is_noticed(self):
+        import trainer
+        t = fd.treatment_for("elena-double-charge", learning.champion(), learning.threshold())
+        p = trainer.Persona("elena-double-charge", t, "tough", seed=1, agent_first=True)
+        r = p.respond("Thanks for calling Acme, you're speaking to Sam. How can I help?")
+        self.assertEqual(r["why"], "opened")
+        self.assertIn("charged twice", r["text"])
+        self.assertEqual(p.agent_name, "Sam")
+        whys = [p.nudge()["why"] for _ in range(3)]
+        self.assertEqual(whys[-1], "hung_up", "a tough, upset customer hangs up on dead air")
+        self.assertIn("dead_air", p.flags)
+        d = trainer.debrief({"persona": p, "treatment": t, "conversation": [{"role": "agent", "text": "Thanks for calling"}]})
+        self.assertTrue(any("hung up" in tip for tip in d["tips"]))
+        # Every persona has a declared voice; none is guessed.
+        for sc in SCENARIOS:
+            self.assertIn(trainer.voice_for(sc["id"])["gender"], ("female", "male"), sc["id"])
+
+    def test_a_customer_who_has_said_everything_does_not_loop(self):
+        # Ravi's story runs out; the agent keeps talking without offering or closing.
+        p, _ = self.persona("ravi-creative-to-experience")
+        for line in p.model_answer[:2]:
+            p.respond(line)
+        p.respond("So the assets are the problem, not the tools. Let me make a note of all of that.")
+        self.assertTrue(p.resolved)
+        said = []
+        for line in ["I completely understand the frustration there.",
+                     "Our platform does have governance built in, I believe.",
+                     "I can hear how much that campaign mistake cost you.",
+                     "Right, I've noted it all down for you."]:
+            r = p.respond(line)
+            said.append(r["text"])
+            if r["ended"]:
+                break
+        self.assertEqual(len(said), len(set(said)), "the customer repeated himself: %r" % said)
+        self.assertTrue(p.ended, "a customer kept talking ends the call himself")
+        self.assertIn("offer_missed", p.flags)
+        # Referring him to the specialist team is the right answer for a cross-suite need.
+        q, _ = self.persona("ravi-creative-to-experience")
+        for line in q.model_answer[:2]:
+            q.respond(line)
+        q.respond("So the assets are the problem. Let me make a note of all of that.")
+        r = q.respond("This is really one for our asset-management specialists. I'll refer you over and they'll call you back this week.")
+        self.assertEqual(r["why"], "accepted")
+        self.assertIn("referred", q.flags)
+        # A solved customer kept on the line says goodbye.
+        e, _ = self.persona("elena-double-charge")
+        for line in e.model_answer:
+            e.respond(line)
+        self.assertTrue(e.resolved)
+        whys = [e.respond("I do apologise once more for the inconvenience caused.")["why"] for _ in range(3)]
+        self.assertEqual(whys[-1], "customer_closed")
+
     def test_moves_are_detected_in_plain_agent_speech(self):
         import trainer
         self.assertIn("verify", trainer.moves("For security, can I just confirm the email address on the account?"))

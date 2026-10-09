@@ -128,7 +128,7 @@ def match_offer(profile, intent_id=None, segment=None):
 
     Returns None for any contact in Service Recovery: there is no offer to match while a
     failure is unresolved."""
-    t = profile.get("_icxdemo", {})
+    t = profile.get("_cxdemo", {})
     e, u, cm = t.get("entitlement", {}), t.get("usage", {}), t.get("commercial", {})
     code = e.get("planCode", "PHOTO_1TB")
     p = plan(code)

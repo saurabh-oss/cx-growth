@@ -198,7 +198,7 @@ def _a(n, id, name, goal, operates, status, poc, increment=None):
 
 
 AGENTS_M7 = [
-    _a(1, "sales-sim", "ICX Sales Simulation Agent",
+    _a(1, "sales-sim", "CX Sales Simulation Agent",
        "Detect and score revenue opportunity inside a live service conversation.",
        ["assist"], "built",
        "This is the Growth Engine and the core of the POC — triage, signal detection, "

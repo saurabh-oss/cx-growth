@@ -143,7 +143,7 @@ def _customer(rng, n):
 def _intent_weights(p):
     """Why this customer is calling. Their state drives it: a full drive produces a
     storage call, an open case produces a billing call."""
-    t = p["_icxdemo"]
+    t = p["_cxdemo"]
     e, u, s = t["entitlement"], t["usage"], t["service"]
     code = e["planCode"]
     w = {"account.access": 2.9, "account.profile": 0.8, "billing.payment": 1.1, "billing.invoice": 0.8,
@@ -177,7 +177,7 @@ def _intent_weights(p):
 
 def _call_weight(p):
     """Customers with something wrong call more."""
-    t = p["_icxdemo"]
+    t = p["_cxdemo"]
     u, s = t["usage"], t["service"]
     w = 1.0
     if s["openCaseCount"]:
@@ -469,12 +469,12 @@ def feed(day, model, threshold, now=None, limit=14):
         k = idx[r["id"]]
         c = k["customer"]
         i = fe.intent(r["intent"])
-        smb = c["_icxdemo"]["customerType"] == "Small Business"
+        smb = c["_cxdemo"]["customerType"] == "Small Business"
         items.append({
             "id": r["id"], "time": "%02d:%02d:%02d" % (r["second"] // 3600, r["second"] % 3600 // 60, r["second"] % 60),
             "age": sec - r["second"],
             "customer": "Unidentified caller" if k["anonymous"] else full_name(c),
-            "plan": "—" if k["anonymous"] else c["_icxdemo"]["entitlement"]["planName"],
+            "plan": "—" if k["anonymous"] else c["_cxdemo"]["entitlement"]["planName"],
             "intent": i["label"], "channel": r["channel"], "segment": r["segment"],
             "propensity": None if r["p"] is None else round(r["p"], 2),
             "decision": r["decision"], "override": r["override"], "blocked_by": r["blocked_by"],
@@ -509,7 +509,7 @@ def queue_metrics(day, model, threshold, base, now=None):
     for r in rows:
         if 0 <= sec - r["second"] <= 900:
             k = idx[r["id"]]
-            smb = (not k["anonymous"]) and k["customer"]["_icxdemo"]["customerType"] == "Small Business"
+            smb = (not k["anonymous"]) and k["customer"]["_cxdemo"]["customerType"] == "Small Business"
             q = fe.QUEUES["smb"] if smb else fe.QUEUES[fe.intent(r["intent"])["queue"]]
             recent[q] = recent.get(q, 0) + 1
     out = []
